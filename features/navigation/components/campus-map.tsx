@@ -315,6 +315,20 @@ function MapCanvas({
     return ids;
   }, [allNodes, floorId]);
 
+  // Helper to check if a point (x, y) is inside a building rectangle
+  const isPointInsideBuilding = (x: number, y: number, b: Building, margin = 6) => {
+    const bx = b.x ?? 0;
+    const by = b.y ?? 0;
+    const bw = b.width ?? 180;
+    const bh = b.height ?? 120;
+    return x > bx + margin && x < bx + bw - margin && y > by + margin && y < by + bh - margin;
+  };
+
+  const isPointOutsideAllBuildings = (x: number, y: number, buildings: Building[], margin = 6) => {
+    if (!buildings || buildings.length === 0) return true;
+    return !buildings.some((b) => isPointInsideBuilding(x, y, b, margin));
+  };
+
   // Helper to check if a node belongs to the currently viewed floor view
   const isNodeOnActiveFloor = useCallback(
     (n?: Node | null) => {
@@ -323,7 +337,21 @@ function MapCanvas({
       // Skip vertical stair/lift nodes from other floors if active floor already has a node in that group
       if (n.stairGroupId && activeFloorStairGroupIds.has(n.stairGroupId)) return false;
       if (n.liftGroupId && activeFloorStairGroupIds.has(n.liftGroupId)) return false;
-      if (n.floorId === "f-out") return true; // Keep Outdoor grounds visible for context
+      if (n.floorId === "f-out" || n.floorId === "outdoor") return true; // Keep Outdoor grounds visible for context
+      if (
+        n.type === "OUTDOOR" ||
+        n.type === "OUTDOOR_PATH" ||
+        n.type === "BUILDING_ENTRANCE" ||
+        n.type === "ENTRANCE" ||
+        n.type === "GATE" ||
+        n.type === "ROAD_JUNCTION" ||
+        n.isEntranceNode ||
+        Boolean(n.outdoorNodeId) ||
+        (n.name && /entrance|gate/i.test(n.name)) ||
+        isPointOutsideAllBuildings(n.x, n.y, publishedData.buildings)
+      ) {
+        return true;
+      }
       if (connectedNodeIdsToActiveFloor.has(n.id)) return true; // Connected nodes on other floors
       if (isGroundFloor) {
         const nFloorObj = publishedData.floors.find((f) => f.id === n.floorId);
@@ -331,7 +359,7 @@ function MapCanvas({
       }
       return false;
     },
-    [floorId, isGroundFloor, publishedData.floors, connectedNodeIdsToActiveFloor, activeFloorStairGroupIds]
+    [floorId, isGroundFloor, publishedData.floors, publishedData.buildings, connectedNodeIdsToActiveFloor, activeFloorStairGroupIds]
   );
 
   const scopeNodes = allNodes.filter((n) => isNodeOnActiveFloor(n));
@@ -340,10 +368,13 @@ function MapCanvas({
     const from = findNode(e.from);
     const to = findNode(e.to);
     if (!from || !to) return false;
+
+    const fromOutdoor = isNodeOnActiveFloor(from);
+    const toOutdoor = isNodeOnActiveFloor(to);
+
     return (
-      from.floorId === floorId ||
-      to.floorId === floorId ||
-      (isNodeOnActiveFloor(from) && isNodeOnActiveFloor(to))
+      (from.floorId === floorId && to.floorId === floorId) ||
+      (fromOutdoor && toOutdoor)
     );
   });
 
@@ -942,25 +973,25 @@ function MapCanvas({
           const badgeWidth = badgeText.length * 6.5 + 20;
 
           return (
-            <g key={`stair-badge-${n.id}`} transform={`translate(${n.x}, ${n.y - 20})`}>
+            <g key={`stair-badge-${n.id}`} transform={`translate(${n.x}, ${n.y - 45})`}>
               <rect
                 x={-badgeWidth / 2}
                 y="-12"
                 width={badgeWidth}
-                height="22"
-                rx="6"
+                height="24"
+                rx="7"
                 fill="#0284c7"
                 stroke="#ffffff"
-                strokeWidth="1.5"
+                strokeWidth="2"
                 className="shadow-lg"
               />
               <text
                 x="0"
-                y="3"
+                y="3.5"
                 textAnchor="middle"
                 fill="#ffffff"
                 fontSize="10"
-                fontWeight="bold"
+                fontWeight="800"
               >
                 {badgeText}
               </text>

@@ -168,13 +168,17 @@ export function buildAdjacencyGraph(
     if (e.type === "STAIRS") modePenalty = 2;
     if (e.type === "LIFT") modePenalty = 1;
 
-    // Compute distance: use explicit e.distance if provided (>0), otherwise spatial/canvas distance
+    // Compute distance: use explicit e.distance if provided (>0), otherwise check vertical transition or canvas distance
     const fn = nodeMap.get(fromId)!;
     const tn = nodeMap.get(toId)!;
     let computedDist = typeof e.distance === "number" && e.distance > 0 ? e.distance : 0;
 
     if (!computedDist && fn && tn) {
-      if (fn.lat && fn.lng && tn.lat && tn.lng) {
+      const isVerticalTransition = e.type === "STAIRS" || e.type === "LIFT" || fn.floorId !== tn.floorId;
+      if (isVerticalTransition) {
+        // Vertical transitions across floors have fixed floor height (15m), NEVER 2D canvas pixel distance
+        computedDist = 15;
+      } else if (fn.lat && fn.lng && tn.lat && tn.lng) {
         computedDist = calculateHaversineDistance(fn.lat, fn.lng, tn.lat, tn.lng);
       } else {
         const dx = tn.x - fn.x;
@@ -189,6 +193,61 @@ export function buildAdjacencyGraph(
     // ALWAYS add both forward AND backward — every campus edge is walkable in both directions
     addDirectedEdge(fromId, toId, e.id, e.type, dist, weight);
     addDirectedEdge(toId, fromId, `${e.id}_rev`, e.type, dist, weight);
+  });
+
+  // ── Ensure consecutive vertical STAIRS edges link stair nodes in exact floor order ──
+  // Group stair nodes by stairGroupId or matching base stair name, then connect consecutive floor levels
+  const stairGroupNodesMap = new Map<string, Node[]>();
+  nodes.forEach((n) => {
+    if (n.type === "STAIR" || n.stairGroupId) {
+      const baseKey = n.stairGroupId || (n.name || "").replace(/\s*\([^)]*\)/g, "").trim().toLowerCase();
+      if (baseKey) {
+        const list = stairGroupNodesMap.get(baseKey) || [];
+        list.push(n);
+        stairGroupNodesMap.set(baseKey, list);
+      }
+    }
+  });
+
+  stairGroupNodesMap.forEach((groupNodes) => {
+    if (groupNodes.length >= 2) {
+      // Sort nodes in floor sequence: Ground/Basement -> Floor 1 -> Floor 2 -> Floor 3 ...
+      groupNodes.sort((a, b) => {
+        const getFloorRank = (n: Node) => {
+          // Extract floor portion inside parentheses, e.g. "STAIRS 1 (RP · Floor 2)" -> "rp · floor 2)"
+          const nameParts = (n.name || "").split("(");
+          const floorText = (nameParts.length > 1 ? nameParts[nameParts.length - 1] : n.name || "").toLowerCase();
+
+          if (floorText.includes("base") || floorText.includes("b-") || floorText.includes("basement")) return -1;
+          if (floorText.includes("ground") || floorText.includes("gnd") || floorText.includes("g)") || floorText.includes(" 0")) return 0;
+
+          const match = floorText.match(/\d+/);
+          if (match) {
+            return parseInt(match[0], 10);
+          }
+
+          const fIdLower = (n.floorId || "").toLowerCase();
+          if (fIdLower.includes("base") || fIdLower.includes("b-")) return -1;
+          if (fIdLower.includes("ground") || fIdLower.endsWith("-g") || fIdLower.includes("-0")) return 0;
+
+          const fIdMatch = fIdLower.match(/\d+/);
+          return fIdMatch ? parseInt(fIdMatch[0], 10) : 1;
+        };
+        return getFloorRank(a) - getFloorRank(b);
+      });
+
+      for (let i = 0; i < groupNodes.length - 1; i++) {
+        const fn = groupNodes[i];
+        const tn = groupNodes[i + 1];
+        if (fn.floorId !== tn.floorId) {
+          const autoStairEdgeId = `e-stair-seq-${fn.id}-${tn.id}`;
+          const dist = 15;
+          const weight = 17; // 15m + 2 penalty for STAIRS
+          addDirectedEdge(fn.id, tn.id, autoStairEdgeId, "STAIRS", dist, weight);
+          addDirectedEdge(tn.id, fn.id, `${autoStairEdgeId}_rev`, "STAIRS", dist, weight);
+        }
+      }
+    }
   });
 
   return { graph, nodeMap };

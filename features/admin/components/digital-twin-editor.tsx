@@ -963,15 +963,30 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
     );
   }, [storeData]);
 
-  // Find set of all node IDs connected directly by an edge to any node on the active floor
   const connectedNodeIdsToActiveFloor = useMemo(() => {
+    if (!activeFloorId || activeFloorId.startsWith("f-all")) return new Set<string>();
     const activeNodes = new Set(
       storeData.nodes.filter((n) => n.floorId === activeFloorId).map((n) => n.id)
     );
     const connected = new Set<string>();
     storeData.edges.forEach((e) => {
-      if (activeNodes.has(e.from)) connected.add(e.to);
-      if (activeNodes.has(e.to)) connected.add(e.from);
+      const fromN = storeData.nodes.find((n) => n.id === e.from);
+      const toN = storeData.nodes.find((n) => n.id === e.to);
+      if (!fromN || !toN) return;
+
+      // Only allow vertical stair/lift connections across floors to active floor view
+      const isVertical =
+        e.type === "STAIRS" ||
+        e.type === "LIFT" ||
+        Boolean(fromN.stairGroupId) ||
+        Boolean(toN.stairGroupId) ||
+        Boolean(fromN.liftGroupId) ||
+        Boolean(toN.liftGroupId);
+
+      if (isVertical) {
+        if (activeNodes.has(e.from)) connected.add(e.to);
+        if (activeNodes.has(e.to)) connected.add(e.from);
+      }
     });
     return connected;
   }, [storeData.nodes, storeData.edges, activeFloorId]);
@@ -998,28 +1013,64 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
     activeFloorId === "f-all-g" ||
     activeFloorObj?.ordinal === 0;
 
-  const floorNodes = storeData.nodes.filter((n) => {
-    if (n.floorId !== activeFloorId) {
-      if (n.stairGroupId && activeFloorStairGroupIds.has(n.stairGroupId)) return false;
-      if (n.liftGroupId && activeFloorStairGroupIds.has(n.liftGroupId)) return false;
+  // Helper to check if a point (x, y) is inside a building rectangle
+  const isPointInsideBuilding = (x: number, y: number, b: Building, margin = 6) => {
+    const bx = b.x ?? 0;
+    const by = b.y ?? 0;
+    const bw = b.width ?? 180;
+    const bh = b.height ?? 120;
+    return x > bx + margin && x < bx + bw - margin && y > by + margin && y < by + bh - margin;
+  };
+
+  const isPointOutsideAllBuildings = (x: number, y: number, buildings: Building[], margin = 6) => {
+    if (!buildings || buildings.length === 0) return true;
+    return !buildings.some((b) => isPointInsideBuilding(x, y, b, margin));
+  };
+
+  // Truly Outdoor nodes (campus walkways, roads, building entrances, outdoor corner nodes)
+  const isOutdoorNode = (n: any) => {
+    if (!n) return false;
+    if (n.floorId === "f-out" || n.floorId === "outdoor") return true;
+    if (
+      n.type === "OUTDOOR" ||
+      n.type === "OUTDOOR_PATH" ||
+      n.type === "BUILDING_ENTRANCE" ||
+      n.type === "ENTRANCE" ||
+      n.type === "GATE" ||
+      n.type === "ROAD_JUNCTION" ||
+      n.isEntranceNode ||
+      Boolean(n.outdoorNodeId) ||
+      (n.name && /entrance|gate/i.test(n.name))
+    ) {
+      return true;
     }
+    // Any node physically located outside all building rectangles is an outdoor campus node
+    return isPointOutsideAllBuildings(n.x, n.y, storeData.buildings);
+  };
+
+  const isOutdoorEdge = (fromN: any, toN: any) => {
+    if (!fromN || !toN) return false;
+    return isOutdoorNode(fromN) || isOutdoorNode(toN);
+  };
+
+  const floorNodes = storeData.nodes.filter((n) => {
+    // 1. Nodes belonging to current active floor (e.g. Basement f-sf-b1)
     if (n.floorId === activeFloorId) return true;
-    if (connectedNodeIdsToActiveFloor.has(n.id)) return true;
-    if (visibleLayers.outdoor && n.floorId === "f-out") return true;
+
+    // 2. Outdoor Campus nodes & border entrances show for ALL floor views
+    if (isOutdoorNode(n)) return true;
+
+    // 3. Ground floor INDOOR & STAIR nodes show ONLY when viewing Ground Floor view!
     if (isGroundFloorView) {
       const fl = storeData.floors.find((f) => f.id === n.floorId);
-      return (
-        n.floorId.includes("gnd") ||
-        fl?.ordinal === 0 ||
-        n.type === "BUILDING_ENTRANCE" ||
-        n.isEntranceNode
-      );
+      if (n.floorId.includes("gnd") || fl?.ordinal === 0) return true;
     }
+
     if (activeFloorId === "f-all-1") {
       const fl = storeData.floors.find((f) => f.id === n.floorId);
       return fl?.ordinal === 1;
     }
-    if (activeFloorId === "f-all") return n.floorId !== "f-out";
+    if (activeFloorId === "f-all") return true;
     return false;
   });
 
@@ -1028,61 +1079,70 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
     const toN = storeData.nodes.find((n) => n.id === e.to);
     if (!fromN || !toN) return false;
 
-    // Cross-floor or cross-boundary edge connected to active floor
+    // Edge connected to active floor
     if (fromN.floorId === activeFloorId || toN.floorId === activeFloorId) {
       return true;
     }
-    // Outdoor edges when outdoor layer is visible
-    if (visibleLayers.outdoor && fromN.floorId === "f-out" && toN.floorId === "f-out") {
+
+    const fromOutdoor = isOutdoorNode(fromN);
+    const toOutdoor = isOutdoorNode(toN);
+
+    // Outdoor edges (both endpoints outside or border entrances) show for ALL floor views (including Basement)
+    if (fromOutdoor && toOutdoor) {
       return true;
     }
 
+    // Ground floor indoor edges show ONLY when viewing Ground Floor
     if (isGroundFloorView) {
       const fl1 = storeData.floors.find((f) => f.id === fromN.floorId);
       const fl2 = storeData.floors.find((f) => f.id === toN.floorId);
-      const isFromGnd =
-        fromN.floorId === "f-out" ||
-        fromN.floorId === activeFloorId ||
-        fromN.floorId.includes("gnd") ||
-        fl1?.ordinal === 0 ||
-        fromN.type === "BUILDING_ENTRANCE" ||
-        fromN.isEntranceNode;
-      const isToGnd =
-        toN.floorId === "f-out" ||
-        toN.floorId === activeFloorId ||
-        toN.floorId.includes("gnd") ||
-        fl2?.ordinal === 0 ||
-        toN.type === "BUILDING_ENTRANCE" ||
-        toN.isEntranceNode;
-      return isFromGnd || isToGnd;
+      if (fl1?.ordinal === 0 || fl2?.ordinal === 0 || fromN.floorId.includes("gnd") || toN.floorId.includes("gnd")) {
+        return true;
+      }
     }
+
     if (activeFloorId === "f-all-1") {
       const fl1 = storeData.floors.find((f) => f.id === fromN.floorId);
       const fl2 = storeData.floors.find((f) => f.id === toN.floorId);
       return fl1?.ordinal === 1 || fl2?.ordinal === 1;
     }
-    if (activeFloorId === "f-all") return fromN.floorId !== "f-out" || toN.floorId !== "f-out";
+    if (activeFloorId === "f-all") return true;
     return false;
   });
 
   const floorDestinations = storeData.destinations.filter((d) => {
     const node = storeData.nodes.find((n) => n.id === d.nodeId);
     const targetFloorId = d.floorId || node?.floorId;
+    if (targetFloorId === activeFloorId) return true;
+
+    // Outdoor destinations & Entrances show for all floors
+    if (
+      targetFloorId === "f-out" ||
+      targetFloorId === "outdoor" ||
+      (node && isOutdoorNode(node)) ||
+      (d.name && /entrance|gate/i.test(d.name))
+    ) {
+      const fl = storeData.floors.find((f) => f.id === targetFloorId);
+      const isGroundIndoor =
+        targetFloorId !== "f-out" &&
+        roomLinkedNodeIds.has(d.nodeId || "") &&
+        (targetFloorId?.includes("gnd") || fl?.ordinal === 0) &&
+        !/entrance|gate/i.test(d.name);
+      if (!isGroundFloorView && isGroundIndoor) return false;
+      return true;
+    }
+
     if (isGroundFloorView) {
       const fl = storeData.floors.find((f) => f.id === targetFloorId);
-      return (
-        targetFloorId === "f-out" ||
-        targetFloorId === activeFloorId ||
-        targetFloorId?.includes("gnd") ||
-        fl?.ordinal === 0
-      );
+      return targetFloorId?.includes("gnd") || fl?.ordinal === 0;
     }
+
     if (activeFloorId === "f-all-1") {
       const fl = storeData.floors.find((f) => f.id === targetFloorId);
       return fl?.ordinal === 1;
     }
-    if (activeFloorId === "f-all") return targetFloorId !== "f-out";
-    return targetFloorId === activeFloorId;
+    if (activeFloorId === "f-all") return true;
+    return false;
   });
 
   // Node IDs that already have a room/destination chip rendered — suppress their inline text label
@@ -1094,6 +1154,7 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
       return true;
     }
     const obsFloor = obs.floorId ?? "f-out";
+    if (visibleLayers.outdoor && obsFloor === "f-out") return true;
     if (isGroundFloorView) {
       const fl = storeData.floors.find((f) => f.id === obsFloor);
       return (
@@ -2200,43 +2261,8 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
                 <Layers className="mr-1.5 h-3.5 w-3.5 text-indigo-500" /> Create Stair / Lift Group
               </Button>
 
-              {/* Auto-Connect Stair & Lift Nodes to Floor Walkways */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  campusStore.autoConnectVerticalNodesToFloor(150);
-                  toast({
-                    type: "success",
-                    title: "Stair & Lift Auto-Connected",
-                    description: "Connected vertical stair/elevator nodes to the nearest floor walkway nodes.",
-                  });
-                }}
-                className="w-full justify-start text-[11px] text-cyan-600 border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 dark:text-cyan-400"
-              >
-                <Zap className="mr-1.5 h-3.5 w-3.5 text-cyan-500" /> Auto-Connect Stairs / Lifts
-              </Button>
 
-              {/* 1-Click Auto-Link Active Floor Walkway to Ground/Outdoor */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  if (activeFloorId === "f-out") {
-                    toast({ type: "info", title: "Outdoor Selected", description: "Select an indoor floor (e.g. Basement) to auto-link its walkway to Ground/Outdoor." });
-                    return;
-                  }
-                  const res = campusStore.autoConnectFloorToOutdoorOrGround(activeFloorId, "WALK");
-                  if (res.success) {
-                    toast({ type: "success", title: "1-Click Walkway Linked", description: res.description ?? "Connected walkway to ground floor." });
-                  } else {
-                    toast({ type: "warning", title: "1-Click Walkway Link", description: res.error ?? "Failed to link walkway." });
-                  }
-                }}
-                className="w-full justify-start text-[11px] text-emerald-600 border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 dark:text-emerald-400"
-              >
-                <Zap className="mr-1.5 h-3.5 w-3.5 text-emerald-500" /> 1-Click Link Floor Walkway
-              </Button>
+
 
               <Button
                 variant="outline"
@@ -2681,9 +2707,10 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
                   );
                 })}
 
-              {/* Render Nodes — Styled 1-to-1 with User Navigation Map (with 25px 𓊍 emoji) */}
-              {visibleLayers.nodes &&
-                floorNodes.map((n) => {
+              {/* Render Nodes — Styled 1-to-1 with User Navigation Map */}
+              {visibleLayers.nodes && (() => {
+                const renderedBadgePositions = new Set<string>();
+                return floorNodes.map((n) => {
                   const isSelected = selectedElement?.type === "node" && selectedElement.id === n.id;
                   const isEdgeStart = edgeStartNodeId === n.id;
                   const isStair = n.type === "STAIR" || (n.name && n.name.toLowerCase().includes("stair"));
@@ -2706,6 +2733,16 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
                   const labelWidth = Math.max(70, displayName.length * 7 + (isStair ? 20 : 16));
                   const badgeHeight = isStairOrLift ? 22 : 19;
                   const labelY = isStairOrLift ? -20 : isSelected ? 20 : 14;
+
+                  const posKey = `${Math.round(n.x)},${Math.round(n.y)}`;
+                  const shouldRenderBadge =
+                    rawName.length > 0 &&
+                    (isStairOrLift || !roomLinkedNodeIds.has(n.id)) &&
+                    !renderedBadgePositions.has(posKey);
+
+                  if (shouldRenderBadge) {
+                    renderedBadgePositions.add(posKey);
+                  }
 
                   return (
                     <g
@@ -2740,8 +2777,8 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
                         strokeWidth={isSelected ? 2.5 : isEdgeStart ? 2.5 : 1.5}
                       />
 
-                      {/* Clean Light-Theme Name Badge for Named Nodes */}
-                      {rawName.length > 0 && !roomLinkedNodeIds.has(n.id) && (
+                      {/* Clean Light-Theme Name Badge for Named Nodes (Deduplicated per position) */}
+                      {shouldRenderBadge && (
                         <g transform={`translate(0, ${labelY})`}>
                           <rect
                             x={-labelWidth / 2}
@@ -2764,7 +2801,7 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
                           >
                             {isStair ? (
                               <>
-                                <tspan fontSize="25" fontWeight="bold">𓊍 </tspan>
+                                <tspan fontSize="35">𓊍 </tspan>
                                 <tspan>{rawName}</tspan>
                               </>
                             ) : isLift ? (
@@ -2780,13 +2817,27 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
                       )}
                     </g>
                   );
-                })}
+                });
+              })()}
 
               {/* Render Rooms / Destinations */}
               {visibleLayers.rooms &&
                 floorDestinations.map((d) => {
                   const linkedNode = storeData.nodes.find((n) => n.id === d.nodeId);
                   if (!linkedNode) return null;
+
+                  // Suppress drawing duplicate room/destination pill for stair & lift nodes (node renderer handles stair badge)
+                  const isLinkedStairOrLift =
+                    linkedNode.type === "STAIR" ||
+                    linkedNode.type === "LIFT" ||
+                    Boolean(linkedNode.stairGroupId) ||
+                    Boolean(linkedNode.liftGroupId) ||
+                    (linkedNode.name && (linkedNode.name.toLowerCase().includes("stair") || linkedNode.name.toLowerCase().includes("lift"))) ||
+                    d.name.toLowerCase().includes("stair") ||
+                    d.name.toLowerCase().includes("lift");
+
+                  if (isLinkedStairOrLift) return null;
+
                   const isSelected = selectedElement?.type === "destination" && selectedElement.id === d.id;
 
                   const nameLower = d.name.toLowerCase();
@@ -3211,7 +3262,7 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
 
                               {/* Floor Transition Badge if destination is on another floor */}
                               {transitionNode && endNode && endNode.floorId !== transitionNode.floorId && (
-                                <g transform={`translate(${transitionNode.x}, ${transitionNode.y - 28})`}>
+                                <g transform={`translate(${transitionNode.x}, ${transitionNode.y - 45})`}>
                                   <rect x="-70" y="-12" width="140" height="22" rx="6" fill="#7c3aed" stroke="#6d28d9" strokeWidth="1.5" />
                                   <text x="0" y="2" textAnchor="middle" fill="white" className="text-[10px] font-extrabold select-none">
                                     Take Stairs to {targetFloorObj?.name || "Target Floor"} ↗
@@ -4223,22 +4274,7 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
                             >
                               <Pencil className="h-3 w-3" />
                             </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-6 w-6 p-0 text-emerald-500 hover:bg-emerald-500/10"
-                              onClick={() => {
-                                const res = campusStore.autoConnectFloorToOutdoorOrGround(f.id, "WALK");
-                                if (res.success) {
-                                  toast({ type: "success", title: "Walkway Linked", description: res.description ?? "Connected walkway to ground floor." });
-                                } else {
-                                  toast({ type: "warning", title: "Auto-Link Walkway", description: res.error ?? "Failed to link walkway." });
-                                }
-                              }}
-                              title="Auto-link walkway/ramp to ground or outdoor"
-                            >
-                              <Zap className="h-3 w-3" />
-                            </Button>
+
                             <Button
                               size="sm"
                               variant="ghost"
@@ -4844,177 +4880,7 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
         </div>
       </div>
 
-      {/* ── Live Route Test Panel ───────────────────────────────────────── */}
-      {activeTool === "TEST_ROUTE" && (
-        <div className="border-t bg-[rgb(var(--card))] p-4 space-y-3 text-xs">
-          <h4 className="font-semibold text-sm flex items-center gap-2">
-            <Play className="h-4 w-4 text-blue-500" /> Live Route Test
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setLiveRouteStartId(null);
-                setLiveRouteStops([]);
-                setLiveRouteDestId(null);
-                setSimResult(null);
-                setAltSimResult(null);
-              }}
-              className="ml-auto h-6 text-[10px] text-[rgb(var(--muted-fg))] hover:text-[rgb(var(--fg))] px-2 py-0"
-            >
-              Clear
-            </Button>
-          </h4>
 
-          <p className="text-[11px] text-[rgb(var(--muted-fg))]">
-            Select start, intermediate stops, and destination nodes from the dropdowns below, or click directly on nodes in the canvas.
-          </p>
-
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {/* Start Node */}
-              <div>
-                <label className="mb-1 block font-medium text-[rgb(var(--fg))]">
-                  Start Node
-                  {liveRouteStartId && (
-                    <span className="ml-1.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] bg-blue-500/15 text-blue-500 font-semibold">SET</span>
-                  )}
-                </label>
-                <select
-                  value={liveRouteStartId ?? ""}
-                  onChange={(e) => {
-                    setLiveRouteStartId(e.target.value || null);
-                    setSimResult(null);
-                  }}
-                  className="w-full rounded border bg-[rgb(var(--bg))] p-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                >
-                  <option value="">Select Start Node…</option>
-                  {allowedNodes.map((n) => (
-                    <option key={n.id} value={n.id}>
-                      {n.name ?? n.id} ({n.type})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* End Node */}
-              <div>
-                <label className="mb-1 block font-medium text-[rgb(var(--fg))]">
-                  Destination Node
-                  {liveRouteDestId && (
-                    <span className="ml-1.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] bg-emerald-500/15 text-emerald-500 font-semibold">SET</span>
-                  )}
-                </label>
-                <select
-                  value={liveRouteDestId ?? ""}
-                  onChange={(e) => {
-                    setLiveRouteDestId(e.target.value || null);
-                    setSimResult(null);
-                  }}
-                  className="w-full rounded border bg-[rgb(var(--bg))] p-2 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                >
-                  <option value="">Select Destination…</option>
-                  {allowedNodes.map((n) => (
-                    <option key={n.id} value={n.id}>
-                      {n.name ?? n.id} ({n.type})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Intermediate Stops */}
-            {liveRouteStops.length > 0 && (
-              <div className="space-y-2 pt-1 border-t border-[rgb(var(--border))]/50">
-                <div className="text-[11px] font-semibold text-[rgb(var(--muted-fg))]">Intermediate Waypoint Stops</div>
-                {liveRouteStops.map((stopId, idx) => (
-                  <div key={idx} className="flex items-center gap-2">
-                    <span className="font-semibold text-amber-500 text-[11px] min-w-[50px] flex items-center gap-1">
-                      <span className="h-1.5 w-1.5 rounded-full bg-amber-400" /> Stop {idx + 1}
-                    </span>
-                    <select
-                      value={stopId}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setLiveRouteStops((prev) => prev.map((s, i) => (i === idx ? val : s)));
-                        setSimResult(null);
-                      }}
-                      className="flex-1 rounded border border-amber-500/40 bg-[rgb(var(--bg))] p-2 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
-                    >
-                      <option value="">Select Intermediate Stop…</option>
-                      {allowedNodes.map((n) => (
-                        <option key={n.id} value={n.id}>
-                          {n.name ?? n.id} ({n.type})
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setLiveRouteStops((prev) => prev.filter((_, i) => i !== idx));
-                        setSimResult(null);
-                      }}
-                      className="text-red-400 hover:text-red-500 p-1 rounded hover:bg-red-500/10 transition-colors"
-                      title="Remove Stop"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Add Stop Button - Matching User Navigation Style */}
-            <button
-              type="button"
-              onClick={() => setLiveRouteStops((prev) => [...prev, ""])}
-              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-amber-400/60 bg-amber-400/5 py-1.5 text-xs font-semibold text-amber-500 hover:bg-amber-400/10 transition-colors cursor-pointer"
-            >
-              <Plus className="h-3.5 w-3.5" /> Add Stop
-            </button>
-          </div>
-
-          {/* Status hint when waiting for canvas clicks */}
-          {!liveRouteStartId && (
-            <div className="flex items-center gap-2 rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-2 text-[11px] text-blue-500">
-              <span className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
-              Click a node on the canvas to set the <strong className="ml-0.5">start point</strong>.
-            </div>
-          )}
-          {liveRouteStartId && liveRouteStops.some((s) => !s) && (
-            <div className="flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-[11px] text-amber-600">
-              <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-              Start set. Click a node on the canvas to set <strong className="ml-0.5">Stop {liveRouteStops.findIndex((s) => !s) + 1}</strong>.
-            </div>
-          )}
-          {liveRouteStartId && !liveRouteStops.some((s) => !s) && !liveRouteDestId && (
-            <div className="flex items-center gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 text-[11px] text-emerald-600">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              Start & Stops set. Click a node on the canvas to set the <strong className="ml-0.5">destination</strong>.
-            </div>
-          )}
-
-          {/* Result Card */}
-          {simResult && (
-            <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-3 flex items-center justify-between">
-              <div>
-                <p className="font-semibold text-emerald-600 dark:text-emerald-400">
-                  Route Found — {Math.round(simResult.totalDistance)} m
-                </p>
-                <p className="text-[11px] text-[rgb(var(--muted-fg))]">
-                  {simResult.nodes.length} nodes · ~{Math.ceil(simResult.totalDistance / 80)} min walk
-                  {liveRouteStops.filter(Boolean).length > 0 && ` · ${liveRouteStops.filter(Boolean).length} intermediate stops`}
-                </p>
-              </div>
-              <Badge className="bg-emerald-600 text-white">{simResult.nodes.length} hops</Badge>
-            </div>
-          )}
-          {simResult === null && liveRouteStartId && liveRouteDestId && (
-            <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-3 text-[11px] text-red-500 font-medium">
-              ✕ No connected path exists between selected nodes.
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Simulator Drawer */}
 
@@ -5573,7 +5439,10 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
                   <div className="flex flex-col gap-2">
                     <Button
                       size="sm"
-                      onClick={() => handleSaveDraft()}
+                      onClick={() => {
+                        handleSaveDraft();
+                        setShowDraftMenuModal(false);
+                      }}
                       className="w-full h-8 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs"
                     >
                       <Sparkles className="mr-1.5 h-3.5 w-3.5" /> Save / Overwrite Active Draft
@@ -5592,6 +5461,7 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
                           campusStore.createCheckpoint(title);
                           handleSaveDraft(title);
                           setCheckpointNameInput("");
+                          setShowDraftMenuModal(false);
                           toast({ type: "success", title: "Checkpoint Created", description: `Saved snapshot "${title}".` });
                         }}
                         className="h-8 bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs px-3 shrink-0"
@@ -5655,7 +5525,8 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
                                 onClick={() => {
                                   const ok = campusStore.updateCheckpoint(cp.id);
                                   if (ok) {
-                                    toast({ type: "success", title: "Checkpoint Updated", description: `Overwrote "${cp.name}" with current state.` });
+                                    setShowDraftMenuModal(false);
+                                    toast({ type: "success", title: "Checkpoint Overwritten!", description: `Overwrote "${cp.name}" with current state.` });
                                   }
                                 }}
                                 className="h-7 text-[10px] px-2 font-semibold border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"

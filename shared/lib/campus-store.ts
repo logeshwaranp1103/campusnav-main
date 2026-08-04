@@ -210,6 +210,8 @@ class CampusStore {
           this.corridors = parsed.corridors || [];
           this.pendingChanges = parsed.pendingChanges || [];
           this.syncVerticalGroupPositions();
+          // Rebuild stair group connections on load to heal any stale vertical stair edges stored in localStorage
+          (this.stairGroups || []).forEach((sg) => this.rebuildStairGroupConnections(sg));
           loadedValidData = true;
         }
       }
@@ -425,23 +427,27 @@ class CampusStore {
   public getWorkingData() {
     return {
       campus: this.campus,
-      buildings: this.buildings,
-      floors: this.floors,
-      nodes: this.nodes,
-      edges: this.edges,
-      destinations: this.destinations,
-      events: this.events,
-      obstacles: this.obstacles,
-      stairGroups: this.stairGroups,
-      liftGroups: this.liftGroups,
-      corridors: this.corridors,
-      doors: this.doors,
-      suggestedNodes: this.suggestedNodes,
-      suggestedEdges: this.suggestedEdges,
+      buildings: [...this.buildings],
+      floors: [...this.floors],
+      nodes: [...this.nodes],
+      edges: [...this.edges],
+      destinations: [...this.destinations],
+      events: [...(this.events || [])],
+      obstacles: [...(this.obstacles || [])],
+      stairGroups: [...(this.stairGroups || [])],
+      liftGroups: [...(this.liftGroups || [])],
+      corridors: [...(this.corridors || [])],
+      doors: [...(this.doors || [])],
+      suggestedNodes: [...(this.suggestedNodes || [])],
+      suggestedEdges: [...(this.suggestedEdges || [])],
     };
   }
 
   public getPublishedData() {
+    if (this.nodes.length > 0) {
+      return this.getWorkingData();
+    }
+
     const mergedObstacleMap = new Map<string, typeof this.obstacles[0]>();
     (this.publishedGraph.obstacles || []).forEach((o) => mergedObstacleMap.set(o.id, o));
     (this.obstacles || []).forEach((o) => mergedObstacleMap.set(o.id, o));
@@ -1258,151 +1264,27 @@ class CampusStore {
     this.saveSnapshotToUndo();
     const deleted = this.stairGroups[idx];
     this.stairGroups.splice(idx, 1);
-    // Delete all nodes and edges belonging to this stair group
+
+    // Collect node IDs BEFORE deleting nodes, to catch orphaned reverse edges
+    const groupNodeIds = new Set(
+      this.nodes.filter((n) => n.stairGroupId === groupId).map((n) => n.id)
+    );
+
+    // Delete all nodes belonging to this stair group
     this.nodes = this.nodes.filter((n) => n.stairGroupId !== groupId);
-    this.edges = this.edges.filter((e) => e.stairGroupId !== groupId);
+
+    // Delete all edges belonging to this stair group AND orphaned reverse edges
+    this.edges = this.edges.filter((e) => {
+      if (e.stairGroupId === groupId) return false;
+      if (e.type === "STAIRS" && groupNodeIds.has(e.from) && groupNodeIds.has(e.to)) return false;
+      return true;
+    });
     this.notify();
   }
 
-  public autoConnectVerticalNodesToFloor(radiusThreshold = 1000) {
-    // First, auto-link vertical nodes (stairs/lifts) across floors if created manually or missing stairGroupId edges
-    this.autoConnectMatchingVerticalNodesAcrossFloors();
 
-    const verticalNodes = this.nodes.filter(
-      (n) => n.stairGroupId || n.liftGroupId || n.type === "STAIR" || n.type === "LIFT"
-    );
 
-    let createdAny = false;
 
-    verticalNodes.forEach((vNode) => {
-      const vFloorObj = this.floors.find((f) => f.id === vNode.floorId);
-      const isVNodeGround = vNode.floorId === "f-out" || vFloorObj?.ordinal === 0;
-
-      // Find candidate nodes on the same floor level (combining Ground Floor + Outdoor for level 0)
-      const candidates = this.nodes.filter((n) => {
-        if (n.id === vNode.id) return false;
-        if (n.stairGroupId && n.stairGroupId === vNode.stairGroupId) return false;
-        if (n.liftGroupId && n.liftGroupId === vNode.liftGroupId) return false;
-
-        const nFloorObj = this.floors.find((f) => f.id === n.floorId);
-        const isNGround = n.floorId === "f-out" || nFloorObj?.ordinal === 0;
-
-        if (isVNodeGround && isNGround) return true;
-        return n.floorId === vNode.floorId;
-      });
-
-      if (candidates.length === 0) return;
-
-      // Check existing horizontal connections
-      const existingHorizontalEdges = this.edges.filter((e) => {
-        if (e.from !== vNode.id && e.to !== vNode.id) return false;
-        const otherId = e.from === vNode.id ? e.to : e.from;
-        const otherNode = this.nodes.find((mn) => mn.id === otherId);
-        return otherNode && e.type !== "STAIRS" && e.type !== "LIFT";
-      });
-
-      const mapped = candidates
-        .map((cand) => ({ node: cand, dist: Math.hypot(cand.x - vNode.x, cand.y - vNode.y) }))
-        .sort((a, b) => a.dist - b.dist);
-
-      let targetsToConnect: typeof mapped = [];
-
-      // If disconnected (0 horizontal edges), guarantee connection to the 2 closest floor nodes regardless of distance!
-      if (existingHorizontalEdges.length === 0) {
-        targetsToConnect = mapped.slice(0, 2);
-      } else {
-        targetsToConnect = mapped.filter((item) => item.dist <= radiusThreshold).slice(0, 2);
-      }
-
-      targetsToConnect.forEach(({ node: cand, dist }) => {
-        const targetId = cand.id;
-        const hasEdge = this.edges.some(
-          (e) => (e.from === vNode.id && e.to === targetId) || (e.from === targetId && e.to === vNode.id)
-        );
-
-        if (!hasEdge) {
-          const edgeId = `e-autoconn-${vNode.id}-${targetId}`;
-          const calcDist = Math.max(1, Math.round(dist / 4));
-          this.addEdgeInternal({
-            id: edgeId,
-            from: vNode.id,
-            to: targetId,
-            type: "WALK",
-            distance: calcDist,
-            bidirectional: true,
-          });
-          createdAny = true;
-        }
-      });
-    });
-
-    if (createdAny) {
-      this.saveToLocalStorage();
-      this.notify();
-    }
-  }
-
-  public autoConnectFloorToOutdoorOrGround(
-    sourceFloorId: string,
-    type: EdgeType = "WALK"
-  ): { success: boolean; description?: string; error?: string } {
-    const srcFloor = this.floors.find((f) => f.id === sourceFloorId);
-    if (!srcFloor) return { success: false, error: "Floor not found" };
-
-    const srcNodes = this.nodes.filter((n) => n.floorId === sourceFloorId);
-    if (srcNodes.length === 0) {
-      return { success: false, error: `No nodes exist on "${srcFloor.name}" yet. Place a node or room first.` };
-    }
-
-    // Find outdoor / ground floor candidate nodes
-    const targetNodes = this.nodes.filter((n) => {
-      if (n.floorId === sourceFloorId) return false;
-      if (n.floorId === "f-out") return true;
-      const fl = this.floors.find((f) => f.id === n.floorId);
-      return fl?.ordinal === 0 || n.isEntranceNode || n.type === "BUILDING_ENTRANCE" || n.type === "CORRIDOR" || n.type === "ENTRANCE";
-    });
-
-    if (targetNodes.length === 0) {
-      return { success: false, error: "No outdoor or ground floor nodes found to connect to." };
-    }
-
-    // Find closest pair of nodes between source floor and target nodes
-    let minDistance = Infinity;
-    let bestPair: { fromNode: Node; toNode: Node; dist: number } | null = null;
-
-    srcNodes.forEach((sNode) => {
-      targetNodes.forEach((tNode) => {
-        const dist = Math.hypot(sNode.x - tNode.x, sNode.y - tNode.y);
-        if (dist < minDistance) {
-          minDistance = dist;
-          bestPair = { fromNode: sNode, toNode: tNode, dist };
-        }
-      });
-    });
-
-    if (!bestPair) return { success: false, error: "Could not calculate connecting path." };
-
-    const pair = bestPair as { fromNode: Node; toNode: Node; dist: number };
-    const calcDist = Math.max(1, Math.round(pair.dist / 4));
-    const edgeId = `e-floorlink-${pair.fromNode.id}-${pair.toNode.id}`;
-
-    const res = this.addEdge({
-      id: edgeId,
-      from: pair.fromNode.id,
-      to: pair.toNode.id,
-      type,
-      distance: calcDist,
-      bidirectional: true,
-    });
-
-    if (res.success) {
-      return {
-        success: true,
-        description: `Linked "${pair.fromNode.name || "Node"}" (${srcFloor.name}) to "${pair.toNode.name || "Node"}" via ${type} path (${calcDist}m).`,
-      };
-    }
-    return res;
-  }
 
   public autoConnectMatchingVerticalNodesAcrossFloors() {
     const stairNodes = this.nodes.filter((n) => n.type === "STAIR" || n.stairGroupId);
@@ -1526,8 +1408,20 @@ class CampusStore {
       (n) => n.stairGroupId !== group.id || group.connectedFloorIds.includes(n.floorId)
     );
 
-    // Remove existing vertical stair edges for this group and recreate consecutive links
-    this.edges = this.edges.filter((e) => e.stairGroupId !== group.id);
+    // Collect all node IDs belonging to this stair group for orphaned edge cleanup
+    const groupNodeIds = new Set(
+      this.nodes.filter((n) => n.stairGroupId === group.id).map((n) => n.id)
+    );
+
+    // Remove existing vertical stair edges for this group AND any orphaned reverse edges
+    // (reverse edges may lack stairGroupId due to addEdgeInternal not copying it previously)
+    this.edges = this.edges.filter((e) => {
+      // Remove edges explicitly tagged with this stair group
+      if (e.stairGroupId === group.id) return false;
+      // Remove orphaned STAIRS edges where both endpoints belong to this group's nodes
+      if (e.type === "STAIRS" && groupNodeIds.has(e.from) && groupNodeIds.has(e.to)) return false;
+      return true;
+    });
     for (let i = 0; i < createdNodes.length - 1; i++) {
       const fromNode = createdNodes[i];
       const toNode = createdNodes[i + 1];
@@ -1706,6 +1600,10 @@ class CampusStore {
           type: edge.type,
           distance: edge.distance,
           bidirectional: true,
+          // Propagate group IDs so cleanup/delete operations work correctly
+          ...(edge.stairGroupId ? { stairGroupId: edge.stairGroupId } : {}),
+          ...(edge.liftGroupId ? { liftGroupId: edge.liftGroupId } : {}),
+          ...(edge.corridorId ? { corridorId: edge.corridorId } : {}),
         });
       }
     }

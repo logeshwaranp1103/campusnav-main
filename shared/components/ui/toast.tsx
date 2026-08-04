@@ -6,9 +6,11 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useState,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 
 type ToastType = "success" | "error" | "warning" | "info";
 type Toast = {
@@ -24,14 +26,15 @@ const ToastCtx = createContext<{
 } | null>(null);
 
 const icons = {
-  success: <CheckCircle2 className="h-5 w-5 text-[rgb(var(--success))]" />,
-  error: <XCircle className="h-5 w-5 text-[rgb(var(--danger))]" />,
-  warning: <AlertTriangle className="h-5 w-5 text-[rgb(var(--warning))]" />,
-  info: <Info className="h-5 w-5 text-[rgb(var(--primary))]" />,
+  success: <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />,
+  error: <XCircle className="h-5 w-5 text-red-500 shrink-0" />,
+  warning: <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0" />,
+  info: <Info className="h-5 w-5 text-blue-500 shrink-0" />,
 };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
 
   const toast = useCallback((t: Omit<Toast, "id">) => {
     const id = Math.random().toString(36).slice(2);
@@ -39,50 +42,75 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setTimeout(() => setToasts((s) => s.filter((x) => x.id !== id)), 4500);
   }, []);
 
+  useEffect(() => {
+    const updateTarget = () => {
+      const fsElement = document.fullscreenElement as HTMLElement | null;
+      setPortalTarget(fsElement || document.body);
+    };
+
+    updateTarget();
+
+    document.addEventListener("fullscreenchange", updateTarget);
+    document.addEventListener("webkitfullscreenchange", updateTarget);
+    document.addEventListener("mozfullscreenchange", updateTarget);
+    document.addEventListener("MSFullscreenChange", updateTarget);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", updateTarget);
+      document.removeEventListener("webkitfullscreenchange", updateTarget);
+      document.removeEventListener("mozfullscreenchange", updateTarget);
+      document.removeEventListener("MSFullscreenChange", updateTarget);
+    };
+  }, []);
+
+  const toastContainer = (
+    <div className="fixed bottom-6 right-6 z-[999999] flex flex-col gap-2.5 max-w-md w-full pointer-events-none px-4">
+      <AnimatePresence>
+        {toasts.map((t) => (
+          <motion.div
+            key={t.id}
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+            className="pointer-events-auto flex items-start gap-3 p-4 rounded-xl border bg-[rgb(var(--card))] text-[rgb(var(--fg))] shadow-2xl backdrop-blur-md border-[rgb(var(--border))]"
+          >
+            {icons[t.type]}
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold leading-tight">{t.title}</div>
+              {t.description && (
+                <div className="mt-1 text-xs text-[rgb(var(--muted-fg))] leading-normal">
+                  {t.description}
+                </div>
+              )}
+              {t.action && (
+                <button
+                  onClick={() => {
+                    t.action?.onClick();
+                    setToasts((s) => s.filter((x) => x.id !== t.id));
+                  }}
+                  className="mt-2 text-xs font-semibold text-[rgb(var(--primary))] hover:underline block"
+                >
+                  {t.action.label}
+                </button>
+              )}
+            </div>
+            <button
+              onClick={() => setToasts((s) => s.filter((x) => x.id !== t.id))}
+              className="text-[rgb(var(--muted-fg))] hover:text-[rgb(var(--fg))] transition-colors p-0.5 rounded"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
+  );
+
   return (
     <ToastCtx.Provider value={{ toast }}>
       {children}
-      <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2">
-        <AnimatePresence>
-          {toasts.map((t) => (
-            <motion.div
-              key={t.id}
-              initial={{ opacity: 0, y: 12, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 8, scale: 0.98 }}
-              transition={{ duration: 0.2 }}
-              className="card flex min-w-72 items-start gap-3 p-4 shadow-lg"
-            >
-              {icons[t.type]}
-              <div className="flex-1">
-                <div className="text-sm font-medium">{t.title}</div>
-                {t.description && (
-                  <div className="mt-0.5 text-xs text-[rgb(var(--muted-fg))]">
-                    {t.description}
-                  </div>
-                )}
-                {t.action && (
-                  <button
-                    onClick={() => {
-                      t.action?.onClick();
-                      setToasts((s) => s.filter((x) => x.id !== t.id));
-                    }}
-                    className="mt-2 text-xs font-semibold text-[rgb(var(--primary))] hover:underline block"
-                  >
-                    {t.action.label}
-                  </button>
-                )}
-              </div>
-              <button
-                onClick={() => setToasts((s) => s.filter((x) => x.id !== t.id))}
-                className="text-[rgb(var(--muted-fg))] hover:text-[rgb(var(--fg))]"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
+      {portalTarget ? createPortal(toastContainer, portalTarget) : null}
     </ToastCtx.Provider>
   );
 }

@@ -30,25 +30,23 @@ export function shortestPath(
 ): Route | null {
   if (!startId || !endId) return null;
 
-  const pub = campusStore.getPublishedData();
   const work = campusStore.getWorkingData();
+  const pub = campusStore.getPublishedData();
 
-  // Always compute routes from BOTH published and working datasets,
-  // then pick the shortest route. This ensures the user's latest edits
-  // (working draft) are reflected in navigation even before publishing,
-  // and prevents stale published snapshots from producing long detours.
   let bestResult: Route | null = null;
-
-  const pubResult = computeShortestPathForData(pub, startId, endId);
-  if (pubResult) {
-    bestResult = pubResult;
-  }
 
   if (work.nodes.length > 0) {
     const workResult = computeShortestPathForData(work, startId, endId);
     if (workResult) {
-      if (!bestResult || workResult.distance < bestResult.distance) {
-        bestResult = workResult;
+      bestResult = workResult;
+    }
+  }
+
+  if (pub.nodes.length > 0) {
+    const pubResult = computeShortestPathForData(pub, startId, endId);
+    if (pubResult) {
+      if (!bestResult || pubResult.distance < bestResult.distance) {
+        bestResult = pubResult;
       }
     }
   }
@@ -199,7 +197,9 @@ function computeShortestPathForData(
     for (const eId of endNodeIds) {
       const res = findShortestPath(primaryGraph, nodeMap, sId, eId);
       if (res) {
-        if (!bestResult || res.totalWeight < bestResult.totalWeight) {
+        // Compare by totalDistance (actual walking distance) to pick the genuinely shortest route,
+        // rather than totalWeight which includes artificial stair/lift penalties
+        if (!bestResult || res.totalDistance < bestResult.totalDistance) {
           bestResult = res;
           isObstacleFree = true;
         }
@@ -207,7 +207,6 @@ function computeShortestPathForData(
     }
   }
 
-  // Pass 2: If no 100% obstacle-free route exists (e.g. all paths pass through obstacle zones), fallback to penalized graph
   if (!bestResult) {
     const { graph: fallbackGraph } = buildAdjacencyGraph(data.nodes, data.edges, {
       obstacles,
@@ -218,7 +217,7 @@ function computeShortestPathForData(
       for (const eId of endNodeIds) {
         const res = findShortestPath(fallbackGraph, nodeMap, sId, eId);
         if (res) {
-          if (!bestResult || res.totalWeight < bestResult.totalWeight) {
+          if (!bestResult || res.totalDistance < bestResult.totalDistance) {
             bestResult = res;
             isObstacleFree = false;
           }
