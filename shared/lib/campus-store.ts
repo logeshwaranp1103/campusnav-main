@@ -1382,14 +1382,14 @@ class CampusStore {
 
     if (!bestPair) return { success: false, error: "Could not calculate connecting path." };
 
-    const { fromNode, toNode, dist } = bestPair;
-    const calcDist = Math.max(1, Math.round(dist / 4));
-    const edgeId = `e-floorlink-${fromNode.id}-${toNode.id}`;
+    const pair = bestPair as { fromNode: Node; toNode: Node; dist: number };
+    const calcDist = Math.max(1, Math.round(pair.dist / 4));
+    const edgeId = `e-floorlink-${pair.fromNode.id}-${pair.toNode.id}`;
 
     const res = this.addEdge({
       id: edgeId,
-      from: fromNode.id,
-      to: toNode.id,
+      from: pair.fromNode.id,
+      to: pair.toNode.id,
       type,
       distance: calcDist,
       bidirectional: true,
@@ -1398,7 +1398,7 @@ class CampusStore {
     if (res.success) {
       return {
         success: true,
-        description: `Linked "${fromNode.name || "Node"}" (${srcFloor.name}) to "${toNode.name || "Node"}" via ${type} path (${calcDist}m).`,
+        description: `Linked "${pair.fromNode.name || "Node"}" (${srcFloor.name}) to "${pair.toNode.name || "Node"}" via ${type} path (${calcDist}m).`,
       };
     }
     return res;
