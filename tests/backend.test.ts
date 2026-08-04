@@ -1,0 +1,92 @@
+import { describe, it, expect, beforeEach } from "vitest";
+import { hashPassword, verifyPassword } from "../lib/auth/auth";
+import { logAuditEvent, getAuditLogs } from "../lib/services/audit-service";
+import { publishDraftGraph } from "../lib/services/publish-service";
+import { getMapVersions, restoreMapVersion } from "../lib/services/version-service";
+import { campusStore } from "../shared/lib/campus-store";
+import type { Building, Floor, Node, Edge } from "../shared/data/campus";
+
+describe("Production Backend Architecture & API Services", () => {
+  beforeEach(() => {
+    campusStore.clearAllData();
+  });
+
+  it("hashes and verifies admin passwords securely", () => {
+    const password = "admin_secure_password_2026";
+    const hash = hashPassword(password);
+
+    expect(hash).toContain(":");
+    expect(verifyPassword(password, hash)).toBe(true);
+    expect(verifyPassword("wrong_password", hash)).toBe(false);
+  });
+
+  it("records and retrieves system audit log events", async () => {
+    const event = await logAuditEvent({
+      userId: "admin-1",
+      action: "ROOM_UPDATED",
+      resource: "room",
+      resourceId: "r-101",
+      before: { name: "Old Room Name" },
+      after: { name: "New Lab 101" },
+    });
+
+    expect(event.action).toBe("ROOM_UPDATED");
+    const logs = await getAuditLogs();
+    expect(logs.some((l: any) => l.action === "ROOM_UPDATED")).toBe(true);
+  });
+
+  it("blocks publishing when Graph Validation Engine finds critical errors", async () => {
+    // Unlinked staircase node without a StairGroup produces a CRITICAL graph validation error
+    const draftSnapshot = {
+      buildings: [],
+      floors: [],
+      nodes: [{ id: "n-stair-bad", type: "STAIR" as const, name: "Broken Stair", floorId: "f-1", x: 10, y: 10 }],
+      edges: [],
+      destinations: [],
+      obstacles: [],
+    };
+
+    const result = await publishDraftGraph(draftSnapshot, "admin-1");
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Publishing blocked");
+    expect(result.validationReport.issues.length).toBeGreaterThan(0);
+  });
+
+  it("successfully publishes clean draft graph and generates map version", async () => {
+    const bld: Building = {
+      id: "b-clean",
+      campusId: "c1",
+      name: "Clean Block",
+      shortCode: "CB",
+      color: "#10b981",
+      lat: 11.4965,
+      lng: 77.2774,
+      floorsCount: 1,
+    };
+    const fl: Floor = { id: "f-clean-1", buildingId: "b-clean", name: "Ground Floor", ordinal: 0, code: "G" };
+    const entNode: Node = { id: "n-ent-clean", type: "BUILDING_ENTRANCE", name: "Main Entrance", floorId: fl.id, x: 50, y: 50 };
+
+    const draftSnapshot = {
+      buildings: [bld],
+      floors: [fl],
+      nodes: [entNode],
+      edges: [],
+      destinations: [],
+      obstacles: [],
+    };
+
+    const result = await publishDraftGraph(draftSnapshot, "admin-1", "Version 2 Release");
+
+    expect(result.success).toBe(true);
+    expect(result.version).toBeGreaterThan(0);
+    expect(result.validationReport.healthScore).toBeGreaterThanOrEqual(70);
+  });
+
+  it("lists map versions and supports version restoration", async () => {
+    const versions = await getMapVersions();
+    expect(versions.length).toBeGreaterThan(0);
+
+    const restored = await restoreMapVersion(versions[0].id, "admin-1");
+    expect(restored.version).toBe(versions[0].version);
+  });
+});

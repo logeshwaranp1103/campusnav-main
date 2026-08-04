@@ -1,0 +1,1051 @@
+"use client";
+
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { motion } from "framer-motion";
+import { cn } from "@/shared/lib/utils";
+import { campusStore } from "@/shared/lib/campus-store";
+import type { Node, Building, Floor, Edge, Destination } from "@/shared/data/campus";
+import type { Route } from "@/features/navigation/services/graph";
+import { getObstructedEdgeIds } from "@/lib/routing/graph";
+import { Building2, Layers, Compass, Locate, AlertTriangle, Sparkles, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
+import { useVisitorGps } from "@/shared/hooks/use-visitor-gps";
+import { DestinationDetailsDrawer } from "./destination-details-drawer";
+import { isEventActive } from "@/shared/lib/event-utils";
+
+type Props = {
+  route: Route | null;
+  livePosition?: Node | null;
+  progress?: number;
+  onNavigateToDest?: (dest: Destination) => void;
+};
+
+export function CampusMap({ route, livePosition, progress, onNavigateToDest }: Props) {
+  const [mounted, setMounted] = useState(false);
+  const [publishedData, setPublishedData] = useState(() => campusStore.getPublishedData());
+  const [view, setView] = useState<string>("f-out");
+  const [selectedDestForDetails, setSelectedDestForDetails] = useState<Destination | null>(null);
+  const [autoRotate, setAutoRotate] = useState(false);
+
+  // Map Zoom & Pan state passed down to MapCanvas via trigger actions
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [resetTrigger, setResetTrigger] = useState(0);
+
+  // User Layer Toggles for Obstacles & Events
+  const [showObstacles, setShowObstacles] = useState(true);
+  const [showEvents, setShowEvents] = useState(true);
+
+  const gps = useVisitorGps();
+
+  useEffect(() => {
+    setMounted(true);
+    setPublishedData(campusStore.getPublishedData());
+    const unsub = campusStore.subscribe(() => {
+      setPublishedData(campusStore.getPublishedData());
+    });
+    return () => unsub();
+  }, []);
+
+  // Auto-switch floor view when route transitions to a new floor
+  useEffect(() => {
+    if (route && route.nodes.length > 0) {
+      const activeStepFloor = route.nodes[0].floorId;
+      if (activeStepFloor) {
+        setView(activeStepFloor);
+      }
+    }
+  }, [route]);
+
+  const indoorFloors = useMemo(() => {
+    if (!route) return [];
+    const ids = new Set(
+      route.nodes.map((n) => n.floorId).filter((f) => f !== "f-out"),
+    );
+    return Array.from(ids);
+  }, [route]);
+
+  const activeView = view === "f-out" || indoorFloors.includes(view) ? view : "f-out";
+
+  const allBuildings = publishedData.buildings;
+  const allFloors = publishedData.floors;
+
+  return (
+    <div className="relative h-full w-full select-none overflow-hidden touch-none" suppressHydrationWarning>
+      <MapCanvas
+        floorId={activeView === "f-out" ? "f-out" : activeView}
+        route={route}
+        livePosition={livePosition}
+        progress={progress}
+        publishedData={publishedData}
+        gps={gps}
+        autoRotate={autoRotate}
+        showObstacles={showObstacles}
+        showEvents={showEvents}
+        externalZoom={zoomLevel}
+        resetTrigger={resetTrigger}
+        onSelectDestination={(dest) => setSelectedDestForDetails(dest)}
+      />
+
+      {/* Floating View, Zoom & Layer Controls */}
+      <div className="absolute right-3 top-3 flex flex-col items-end gap-1.5 z-20 pointer-events-auto">
+        {/* Zoom & Reset Controls */}
+        <div className="flex flex-col gap-1 rounded-xl border bg-[rgb(var(--card))]/90 p-1 shadow-lg backdrop-blur-md w-fit">
+          <button
+            onClick={() => setZoomLevel((z) => Math.min(4, z * 1.25))}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-[rgb(var(--fg))] hover:bg-[rgb(var(--muted))] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--primary))]"
+            title="Zoom In"
+          >
+            <ZoomIn className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => setZoomLevel((z) => Math.max(0.5, z / 1.25))}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-[rgb(var(--fg))] hover:bg-[rgb(var(--muted))] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--primary))]"
+            title="Zoom Out"
+          >
+            <ZoomOut className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => {
+              setZoomLevel(1);
+              setResetTrigger((t) => t + 1);
+            }}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-[rgb(var(--fg))] hover:bg-[rgb(var(--muted))] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--primary))]"
+            title="Reset Map Pan & Zoom"
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        {/* Floor Selection */}
+        <div className="flex flex-col gap-1 rounded-xl border bg-[rgb(var(--card))]/90 p-1.5 shadow-lg backdrop-blur-md w-fit">
+          <FloorButton
+            active={activeView === "f-out"}
+            onClick={() => setView("f-out")}
+            icon={<Building2 className="h-3.5 w-3.5" />}
+            label="Outdoor"
+          />
+          {indoorFloors.map((fid) => {
+            const f = allFloors.find((x) => x.id === fid);
+            const b = f ? allBuildings.find((x) => x.id === f.buildingId) : undefined;
+            return (
+              <FloorButton
+                key={fid}
+                active={activeView === fid}
+                onClick={() => setView(fid)}
+                icon={<Layers className="h-3.5 w-3.5" />}
+                label={`${b?.shortCode ?? ""} · ${f?.name ?? "Floor"}`}
+              />
+            );
+          })}
+        </div>
+
+        {/* User Layer Toggles: Obstacles & Events */}
+        <div className="flex flex-col gap-1 rounded-xl border bg-[rgb(var(--card))]/90 p-1.5 shadow-lg backdrop-blur-md w-fit">
+          <button
+            onClick={() => setShowObstacles(!showObstacles)}
+            className={`flex h-7 items-center gap-1.5 px-2 rounded-lg text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
+              showObstacles
+                ? "bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30"
+                : "text-[rgb(var(--muted-fg))] hover:bg-[rgb(var(--muted))]"
+            }`}
+            title="Toggle Campus Hazards & Obstacles"
+          >
+            <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
+            <span>Obstacles</span>
+          </button>
+
+          <button
+            onClick={() => setShowEvents(!showEvents)}
+            className={`flex h-7 items-center gap-1.5 px-2 rounded-lg text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${
+              showEvents
+                ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
+                : "text-[rgb(var(--muted-fg))] hover:bg-[rgb(var(--muted))]"
+            }`}
+            title="Toggle Campus Events"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+            <span>Events</span>
+          </button>
+        </div>
+
+        {/* Recenter & Compass Rotation Buttons */}
+        <div className="flex flex-col gap-1 rounded-xl border bg-[rgb(var(--card))]/90 p-1.5 shadow-lg backdrop-blur-md w-fit">
+          <button
+            onClick={() => {
+              setZoomLevel(1);
+              setResetTrigger((t) => t + 1);
+              gps.recenter({ x: 400, y: 300, floorId: activeView });
+            }}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-emerald-500 hover:bg-[rgb(var(--muted))] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+            title="Recenter on My Location"
+          >
+            <Locate className="h-4 w-4" />
+          </button>
+
+          <button
+            onClick={() => setAutoRotate(!autoRotate)}
+            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+              autoRotate ? "bg-indigo-600 text-white shadow-sm" : "text-[rgb(var(--muted-fg))] hover:bg-[rgb(var(--muted))]"
+            }`}
+            title="Toggle Heading Rotation"
+          >
+            <Compass className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Destination Details Drawer */}
+      <DestinationDetailsDrawer
+        destination={selectedDestForDetails}
+        building={allBuildings.find((b) => b.id === allFloors.find((f) => f.id === selectedDestForDetails?.floorId)?.buildingId)}
+        floorName={allFloors.find((f) => f.id === selectedDestForDetails?.floorId)?.name}
+        onClose={() => setSelectedDestForDetails(null)}
+        onNavigate={(dest) => {
+          setSelectedDestForDetails(null);
+          if (onNavigateToDest) onNavigateToDest(dest);
+        }}
+      />
+    </div>
+  );
+}
+
+function FloorButton({
+  active,
+  onClick,
+  icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <button
+      suppressHydrationWarning
+      onClick={onClick}
+      className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--primary))] ${active ? "bg-[rgb(var(--primary))] text-[rgb(var(--primary-fg))]" : "hover:bg-[rgb(var(--muted))]"}`}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+function MapCanvas({
+  floorId,
+  route,
+  livePosition,
+  progress,
+  publishedData,
+  gps,
+  autoRotate,
+  showObstacles = true,
+  showEvents = true,
+  externalZoom = 1,
+  resetTrigger = 0,
+  onSelectDestination,
+}: {
+  floorId: string;
+  route: Route | null;
+  livePosition?: Node | null;
+  progress?: number;
+  publishedData: ReturnType<typeof campusStore.getPublishedData>;
+  gps?: ReturnType<typeof useVisitorGps>;
+  autoRotate?: boolean;
+  showObstacles?: boolean;
+  showEvents?: boolean;
+  externalZoom?: number;
+  resetTrigger?: number;
+  onSelectDestination?: (dest: Destination) => void;
+}) {
+  const { buildings, nodes: allNodes, edges: allEdges, destinations: allDestinations, events: allEvents } = publishedData;
+  const svgRef = useRef<SVGSVGElement | null>(null);
+
+  // Interactive Pan & Zoom State
+  const [internalZoom, setInternalZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+
+  const currentZoom = externalZoom * internalZoom;
+
+  // Reset pan & internal zoom when floorId changes or resetTrigger fires
+  useEffect(() => {
+    setInternalZoom(1);
+    setPan({ x: 0, y: 0 });
+  }, [floorId, resetTrigger]);
+
+  const nodeLookupMap = useMemo(() => {
+    const map = new Map<string, Node>();
+    allNodes.forEach((n) => map.set(n.id, n));
+    if (route?.nodes) {
+      route.nodes.forEach((n) => map.set(n.id, n));
+    }
+    return map;
+  }, [allNodes, route]);
+
+  const findNode = (id: string) => nodeLookupMap.get(id);
+  const currentFloorObj = useMemo(
+    () => publishedData.floors.find((f) => f.id === floorId),
+    [publishedData.floors, floorId]
+  );
+  const isGroundFloor = floorId === "f-out" || currentFloorObj?.ordinal === 0;
+
+  // Set of node IDs connected directly by an edge to any node on the active floor
+  const connectedNodeIdsToActiveFloor = useMemo(() => {
+    const activeNodes = new Set(
+      allNodes.filter((n) => n.floorId === floorId).map((n) => n.id)
+    );
+    const connected = new Set<string>();
+    allEdges.forEach((e) => {
+      if (activeNodes.has(e.from)) connected.add(e.to);
+      if (activeNodes.has(e.to)) connected.add(e.from);
+    });
+    return connected;
+  }, [allNodes, allEdges, floorId]);
+
+  // Set of stair/lift group IDs that have a node on the active floor
+  const activeFloorStairGroupIds = useMemo(() => {
+    const ids = new Set<string>();
+    allNodes.forEach((n) => {
+      if (n.floorId === floorId) {
+        if (n.stairGroupId) ids.add(n.stairGroupId);
+        if (n.liftGroupId) ids.add(n.liftGroupId);
+      }
+    });
+    return ids;
+  }, [allNodes, floorId]);
+
+  // Helper to check if a node belongs to the currently viewed floor view
+  const isNodeOnActiveFloor = useCallback(
+    (n?: Node | null) => {
+      if (!n) return false;
+      if (n.floorId === floorId) return true;
+      // Skip vertical stair/lift nodes from other floors if active floor already has a node in that group
+      if (n.stairGroupId && activeFloorStairGroupIds.has(n.stairGroupId)) return false;
+      if (n.liftGroupId && activeFloorStairGroupIds.has(n.liftGroupId)) return false;
+      if (n.floorId === "f-out") return true; // Keep Outdoor grounds visible for context
+      if (connectedNodeIdsToActiveFloor.has(n.id)) return true; // Connected nodes on other floors
+      if (isGroundFloor) {
+        const nFloorObj = publishedData.floors.find((f) => f.id === n.floorId);
+        return nFloorObj?.ordinal === 0;
+      }
+      return false;
+    },
+    [floorId, isGroundFloor, publishedData.floors, connectedNodeIdsToActiveFloor, activeFloorStairGroupIds]
+  );
+
+  const scopeNodes = allNodes.filter((n) => isNodeOnActiveFloor(n));
+
+  const scopeEdges = allEdges.filter((e) => {
+    const from = findNode(e.from);
+    const to = findNode(e.to);
+    if (!from || !to) return false;
+    return (
+      from.floorId === floorId ||
+      to.floorId === floorId ||
+      (isNodeOnActiveFloor(from) && isNodeOnActiveFloor(to))
+    );
+  });
+
+  const routeNodes = route?.nodes.filter((n) => isNodeOnActiveFloor(n)) ?? [];
+
+  const routeEdges =
+    route?.edges.filter((e) => {
+      const from = findNode(e.from);
+      const to = findNode(e.to);
+      if (!from || !to) return false;
+      return (
+        from.floorId === floorId ||
+        to.floorId === floorId ||
+        (isNodeOnActiveFloor(from) && isNodeOnActiveFloor(to))
+      );
+    }) ?? [];
+
+  const blockedEdgeIds = useMemo(() => {
+    return getObstructedEdgeIds(allNodes, allEdges, publishedData.obstacles);
+  }, [allNodes, allEdges, publishedData.obstacles]);
+
+  const destination = route?.nodes[route.nodes.length - 1];
+  const showLiveHere = livePosition && isNodeOnActiveFloor(livePosition);
+
+  // Calculate dynamic SVG bounding box so all published buildings are visible
+  const bounds = useMemo(() => {
+    if (buildings.length === 0) return { x: 0, y: 0, w: 900, h: 650 };
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    buildings.forEach((b) => {
+      const bx = b.x ?? 100;
+      const by = b.y ?? 100;
+      const bw = b.width ?? 180;
+      const bh = b.height ?? 120;
+      minX = Math.min(minX, bx - 50);
+      minY = Math.min(minY, by - 50);
+      maxX = Math.max(maxX, bx + bw + 50);
+      maxY = Math.max(maxY, by + bh + 50);
+    });
+    return {
+      x: Math.max(0, Math.floor(minX)),
+      y: Math.max(0, Math.floor(minY)),
+      w: Math.max(800, Math.ceil(maxX - Math.max(0, Math.floor(minX)))),
+      h: Math.max(600, Math.ceil(maxY - Math.max(0, Math.floor(minX)))),
+    };
+  }, [buildings]);
+
+  // Calculate viewBox with current pan and zoom
+  const effectiveW = bounds.w / currentZoom;
+  const effectiveH = bounds.h / currentZoom;
+  const effectiveX = bounds.x + (bounds.w - effectiveW) / 2 - pan.x;
+  const effectiveY = bounds.y + (bounds.h - effectiveH) / 2 - pan.y;
+  const viewBoxStr = `${effectiveX} ${effectiveY} ${effectiveW} ${effectiveH}`;
+
+  // Mouse drag handlers for Desktop
+  const handleMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (e.button !== 0) return;
+    setIsDragging(true);
+    setDragStart({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!isDragging || !svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const scaleX = effectiveW / rect.width;
+    const scaleY = effectiveH / rect.height;
+
+    const dx = (e.clientX - dragStart.x) * scaleX;
+    const dy = (e.clientY - dragStart.y) * scaleY;
+
+    setPan((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+    setDragStart({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  // Non-passive wheel zoom listener to avoid browser passive event listener warning
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      setInternalZoom((prev) => Math.min(5, Math.max(0.4, prev * factor)));
+    };
+    svg.addEventListener("wheel", handleWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", handleWheel);
+  }, []);
+
+  // Touch gesture handlers for Mobile (1-finger pan, 2-finger pinch zoom)
+  const touchRef = useRef<{ x: number; y: number; dist?: number } | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent<SVGSVGElement>) => {
+    if (e.touches.length === 1) {
+      touchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    } else if (e.touches.length === 2) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      touchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, dist };
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<SVGSVGElement>) => {
+    if (!touchRef.current || !svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const scaleX = effectiveW / rect.width;
+    const scaleY = effectiveH / rect.height;
+
+    if (e.touches.length === 1) {
+      const dx = (e.touches[0].clientX - touchRef.current.x) * scaleX;
+      const dy = (e.touches[0].clientY - touchRef.current.y) * scaleY;
+      setPan((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+      touchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    } else if (e.touches.length === 2 && touchRef.current.dist) {
+      const newDist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const ratio = newDist / touchRef.current.dist;
+      setInternalZoom((prev) => Math.min(5, Math.max(0.4, prev * ratio)));
+      touchRef.current.dist = newDist;
+    }
+  };
+
+  const handleTouchEnd = () => {
+    touchRef.current = null;
+  };
+
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNowMs(Date.now());
+    }, 5000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <svg
+      ref={svgRef}
+      viewBox={viewBoxStr}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      className={cn(
+        "h-full w-full touch-none select-none transition-cursor bg-[#f8fafc]",
+        isDragging ? "cursor-grabbing" : "cursor-grab"
+      )}
+      preserveAspectRatio="xMidYMid meet"
+    >
+      <defs>
+        <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse">
+          <path
+            d="M 28 0 L 0 0 0 28"
+            fill="none"
+            stroke="#cbd5e1"
+            strokeOpacity="0.5"
+            strokeWidth="0.8"
+          />
+        </pattern>
+        <linearGradient id="bldFillGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#818cf8" stopOpacity="0.14" />
+          <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.08" />
+        </linearGradient>
+        <linearGradient id="routeGrad" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor="#10b981" />
+          <stop offset="100%" stopColor="#2563eb" />
+        </linearGradient>
+      </defs>
+
+      <rect x={bounds.x} y={bounds.y} width={bounds.w} height={bounds.h} fill="url(#grid)" />
+
+      {buildings.length === 0 && (
+        <g transform={`translate(${bounds.w / 2}, ${bounds.h / 2})`}>
+          <text
+            x="0"
+            y="-10"
+            textAnchor="middle"
+            fill="#64748b"
+            fontSize="14"
+            fontWeight="600"
+          >
+            No published map available yet.
+          </text>
+          <text
+            x="0"
+            y="15"
+            textAnchor="middle"
+            fill="#94a3b8"
+            fontSize="12"
+          >
+            Create buildings in Admin panel and click "Publish Map".
+          </text>
+        </g>
+      )}
+
+      {/* Buildings Footprints & Outlines — Light Theme Architectural Blueprint */}
+      <g>
+        {buildings.map((b) => {
+          const bx = b.x ?? Math.round(((b.lng ?? 0) - 77.594) * 10000);
+          const by = b.y ?? Math.round(((b.lat ?? 0) - 12.971) * 10000);
+          const bw = b.width ?? 180;
+          const bh = b.height ?? 120;
+
+          const buildingEvents = showEvents ? allEvents.filter((ev) => ev.buildingId === b.id) : [];
+          const activeEvent = buildingEvents.find((ev) => isEventActive(ev, nowMs));
+
+          const strokeColor = activeEvent?.color || b.color || "#4f46e5";
+          const bName = `${b.name}${b.shortCode ? ` (${b.shortCode})` : ""}`;
+          const badgeWidth = Math.max(145, bName.length * 9.5 + 32);
+
+          return (
+            <g key={b.id}>
+              {/* Outer Glow Outline */}
+              <rect
+                x={bx - 1}
+                y={by - 1}
+                width={bw + 2}
+                height={bh + 2}
+                rx={12}
+                fill="none"
+                stroke={strokeColor}
+                strokeWidth="3"
+                strokeOpacity="0.2"
+              />
+              {/* Solid Light-Theme Building Footprint */}
+              <rect
+                x={bx}
+                y={by}
+                width={bw}
+                height={bh}
+                rx={10}
+                fill="url(#bldFillGrad)"
+                stroke={strokeColor}
+                strokeWidth={activeEvent ? "3" : "2.5"}
+                strokeDasharray={floorId !== "f-out" && !isGroundFloor ? "6 4" : undefined}
+              />
+              {/* Inner Architectural Accent Line */}
+              <rect
+                x={bx + 6}
+                y={by + 6}
+                width={bw - 12}
+                height={bh - 12}
+                rx={6}
+                fill="none"
+                stroke={strokeColor}
+                strokeWidth="1"
+                strokeOpacity="0.25"
+                strokeDasharray="4 4"
+              />
+
+              {/* Prominent White Building Header Badge */}
+              <g transform={`translate(${bx + bw / 2}, ${by + 26})`}>
+                <rect
+                  x={-badgeWidth / 2}
+                  y="-16"
+                  width={badgeWidth}
+                  height="32"
+                  rx="8"
+                  fill="#ffffff"
+                  stroke="#4f46e5"
+                  strokeWidth="2"
+                  className="shadow-md"
+                />
+                <text
+                  x="0"
+                  y="4.5"
+                  textAnchor="middle"
+                  fill="#1e1b4b"
+                  fontSize="15"
+                  fontWeight="900"
+                  letterSpacing="0.02em"
+                >
+                  <tspan fontSize="17">🏢 </tspan>
+                  <tspan>{bName}</tspan>
+                </text>
+              </g>
+
+              {activeEvent && (
+                <g transform={`translate(${bx + bw - 28}, ${by + 6})`}>
+                  <rect width="20" height="20" rx="10" fill={activeEvent.color || "#f59e0b"} />
+                  <text x="10" y="14" textAnchor="middle" fill="#ffffff" fontSize="10" fontWeight="bold">
+                    ✨
+                  </text>
+                </g>
+              )}
+            </g>
+          );
+        })}
+
+        {/* Standalone Events Badges */}
+        {showEvents &&
+          allEvents.filter((ev) => isEventActive(ev, nowMs)).map((ev) => {
+            const bld = buildings.find((b) => b.id === ev.buildingId);
+            const evX = ev.x ?? (bld ? (bld.x ?? 0) + (bld.width ?? 180) / 2 : 400);
+            const evY = ev.y ?? (bld ? (bld.y ?? 0) + (bld.height ?? 120) / 2 : 300);
+            const color = ev.color || "#f59e0b";
+            const pillWidth = Math.max(85, ev.title.length * 6 + 32);
+
+            return (
+              <g key={`map-ev-${ev.id}`} transform={`translate(${evX}, ${evY})`}>
+                <rect
+                  x={-pillWidth / 2}
+                  y="-12"
+                  width={pillWidth}
+                  height="22"
+                  rx="6"
+                  fill={color}
+                  fillOpacity="0.95"
+                  stroke="#ffffff"
+                  strokeWidth="1.5"
+                  className="shadow-md"
+                />
+                <text
+                  x="0"
+                  y="2"
+                  textAnchor="middle"
+                  fill="#ffffff"
+                  fontSize="10"
+                  fontWeight="bold"
+                >
+                  ✨ {ev.title}
+                </text>
+              </g>
+            );
+          })}
+      </g>
+
+      {/* Published Obstacles / Hazards Layer */}
+      {showObstacles && (
+        <g>
+          {publishedData.obstacles
+            .filter((obs) => {
+              const obsFloor = obs.floorId ?? "f-out";
+              if (floorId === "f-out") {
+                return obsFloor === "f-out";
+              }
+              if (obsFloor === floorId) return true;
+              const obsFloorObj = publishedData.floors.find((f) => f.id === obsFloor);
+              const curFloorObj = publishedData.floors.find((f) => f.id === floorId);
+              return Boolean(
+                obsFloorObj &&
+                  curFloorObj &&
+                  obsFloorObj.ordinal === curFloorObj.ordinal &&
+                  obsFloorObj.buildingId === curFloorObj.buildingId
+              );
+            })
+            .map((obs) => {
+              const targetNode = obs.nodeId ? allNodes.find((n) => n.id === obs.nodeId) : null;
+              const obsX = obs.x ?? targetNode?.x ?? 400;
+              const obsY = obs.y ?? targetNode?.y ?? 300;
+              const isRouteOnly = Boolean(obs.edgeIds && obs.edgeIds.length > 0);
+              const hasRadius = !isRouteOnly && typeof obs.radius === "number" && obs.radius > 0;
+              const radius = hasRadius ? obs.radius! : 0;
+              const label = obs.reason || "Hazard / Blocked";
+              const labelText = isRouteOnly ? `⚠ ${label}` : `⚠ ${label}${hasRadius ? ` (${radius}px)` : ""}`;
+              const pillWidth = Math.max(75, labelText.length * 6 + 26);
+
+              return (
+                <g key={`user-obs-${obs.id}`} transform={`translate(${obsX}, ${obsY})`}>
+                  {/* Danger Radius Circle (rendered ONLY for Area Hazards with positive radius) */}
+                  {hasRadius && (
+                    <circle
+                      r={radius}
+                      fill="rgba(239, 68, 68, 0.18)"
+                      stroke="#ef4444"
+                      strokeWidth="1.5"
+                      strokeDasharray="4 3"
+                      className="animate-pulse"
+                    />
+                  )}
+                  {/* Central Danger Marker */}
+                  <circle r="7" fill="#ef4444" opacity="0.35" className="animate-ping" />
+                  <circle r="5" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
+                  {/* Danger Badge Label */}
+                  <g transform={`translate(0, ${hasRadius ? -radius - 8 : -14})`}>
+                    <rect
+                      x={-pillWidth / 2}
+                      y="-10"
+                      width={pillWidth}
+                      height="20"
+                      rx="6"
+                      fill="#ef4444"
+                      fillOpacity="0.95"
+                      stroke="#ffffff"
+                      strokeWidth="1.5"
+                      className="shadow-md"
+                    />
+                    <text
+                      x="0"
+                      y="3"
+                      textAnchor="middle"
+                      fill="#ffffff"
+                      fontSize="9.5"
+                      fontWeight="bold"
+                    >
+                      {labelText}
+                    </text>
+                  </g>
+                </g>
+              );
+            })}
+        </g>
+      )}
+
+      {/* Base Walkway Edges — Crisp Slate Lines */}
+      {scopeEdges.map((e) => {
+        const from = allNodes.find((n) => n.id === e.from);
+        const to = allNodes.find((n) => n.id === e.to);
+        if (!from || !to) return null;
+
+        const baseId = e.id.replace(/_rev$/, "");
+        const isBlocked = showObstacles && (
+          blockedEdgeIds.has(e.id) ||
+          blockedEdgeIds.has(baseId) ||
+          blockedEdgeIds.has(`${baseId}_rev`)
+        );
+
+        return (
+          <line
+            key={e.id}
+            x1={from.x}
+            y1={from.y}
+            x2={to.x}
+            y2={to.y}
+            stroke={isBlocked ? "#ef4444" : "#64748b"}
+            strokeWidth={isBlocked ? 3.5 : 2.5}
+            strokeDasharray={isBlocked ? "6 4" : undefined}
+            strokeOpacity={0.8}
+          />
+        );
+      })}
+
+      {/* Glowing Vibrant Route Highlight Lines */}
+      {routeEdges.map((e, i) => {
+        const from = findNode(e.from);
+        const to = findNode(e.to);
+        if (!from || !to) return null;
+
+        const baseId = e.id.replace(/_rev$/, "");
+        const isSegmentBlocked =
+          blockedEdgeIds.has(e.id) ||
+          blockedEdgeIds.has(baseId) ||
+          blockedEdgeIds.has(`${baseId}_rev`);
+
+        return (
+          <g key={`r-group-${e.id}-${i}`}>
+            {/* Outer Vibrant Glow Line */}
+            <line
+              x1={from.x}
+              y1={from.y}
+              x2={to.x}
+              y2={to.y}
+              stroke={isSegmentBlocked ? "#ef4444" : "#2563eb"}
+              strokeWidth={isSegmentBlocked ? 8 : 9}
+              strokeOpacity={isSegmentBlocked ? 0.4 : 0.35}
+              strokeDasharray={isSegmentBlocked ? "6 4" : undefined}
+              strokeLinecap="round"
+            />
+            {/* Inner High-Contrast Animated Path Line */}
+            <motion.line
+              key={`r-${e.id}-${i}`}
+              initial={{ pathLength: 0 }}
+              animate={{ pathLength: 1 }}
+              transition={{ duration: 0.5, delay: i * 0.05 }}
+              x1={from.x}
+              y1={from.y}
+              x2={to.x}
+              y2={to.y}
+              stroke={isSegmentBlocked ? "#ef4444" : "url(#routeGrad)"}
+              strokeWidth={isSegmentBlocked ? 5 : 4.5}
+              strokeDasharray={isSegmentBlocked ? "6 4" : undefined}
+              strokeLinecap="round"
+            />
+          </g>
+        );
+      })}
+
+      {/* Nodes & Named Labels with Clean Light Badges */}
+      {scopeNodes.map((n) => {
+        const onRoute = routeNodes.some((rn) => rn.id === n.id);
+        const isDest = destination?.id === n.id;
+        const isStair = n.type === "STAIR" || (n.name && n.name.toLowerCase().includes("stair"));
+        const isLift = n.type === "LIFT" || (n.name && n.name.toLowerCase().includes("lift"));
+        const isStairOrLift = isStair || isLift;
+
+        const nodeColor = isDest
+          ? "#10b981"
+          : isStairOrLift
+          ? "#f59e0b"
+          : onRoute
+          ? "#2563eb"
+          : "#64748b";
+        const nodeRadius = isDest ? 9 : isStairOrLift ? 7 : onRoute ? 6.5 : 4.5;
+
+        const rawName = n.name || "";
+        const displayName = isStair ? `𓊍 ${rawName}` : isLift ? `🛗 ${rawName}` : rawName;
+        const labelWidth = Math.max(70, displayName.length * 7 + (isStair ? 20 : 16));
+        const badgeHeight = isStairOrLift ? 22 : 19;
+
+        // Position Stair & Lift badges ABOVE the node (n.y - 20) so they never overlap corridor nodes below
+        const labelY = isStairOrLift
+          ? n.y - 20
+          : n.y + (isDest ? 20 : onRoute ? 17 : 14);
+
+        return (
+          <g key={n.id}>
+            {/* Outer Glow Ring for Stairs */}
+            {isStairOrLift && (
+              <circle
+                cx={n.x}
+                cy={n.y}
+                r={10}
+                fill="none"
+                stroke="#f59e0b"
+                strokeWidth="2"
+                strokeOpacity="0.4"
+                className="animate-pulse"
+              />
+            )}
+
+            <circle
+              cx={n.x}
+              cy={n.y}
+              r={nodeRadius}
+              fill={nodeColor}
+              stroke="#ffffff"
+              strokeWidth={isDest ? 2.5 : isStairOrLift ? 2 : onRoute ? 2 : 1.5}
+              opacity={onRoute || isDest || isStairOrLift ? 1 : 0.85}
+              className={isDest ? "animate-pulse" : undefined}
+            />
+
+            {/* Clean Light-Theme Name Badge for Named Nodes */}
+            {rawName.length > 0 && (
+              <g transform={`translate(${n.x}, ${labelY})`}>
+                <rect
+                  x={-labelWidth / 2}
+                  y={-badgeHeight / 2}
+                  width={labelWidth}
+                  height={badgeHeight}
+                  rx="5"
+                  fill="#ffffff"
+                  stroke={isDest ? "#10b981" : isStairOrLift ? "#f59e0b" : onRoute ? "#2563eb" : "#94a3b8"}
+                  strokeWidth="1.5"
+                  className="shadow-md"
+                />
+                <text
+                  x="0"
+                  y="3.5"
+                  textAnchor="middle"
+                  fill={isDest ? "#065f46" : isStairOrLift ? "#b45309" : onRoute ? "#1e40af" : "#0f172a"}
+                  fontSize={isDest ? 11 : isStairOrLift ? 11 : onRoute ? 10 : 9}
+                  fontWeight="700"
+                >
+                  {isStair ? (
+                    <>
+                      <tspan fontSize="25" fontWeight="bold">𓊍 </tspan>
+                      <tspan>{rawName}</tspan>
+                    </>
+                  ) : isLift ? (
+                    <>
+                      <tspan fontSize="14">🛗 </tspan>
+                      <tspan>{rawName}</tspan>
+                    </>
+                  ) : (
+                    displayName
+                  )}
+                </text>
+              </g>
+            )}
+          </g>
+        );
+      })}
+
+      {/* Floor Transition Badges for Stair & Lift Nodes on Route */}
+      {route &&
+        routeNodes.map((n) => {
+          if (n.type !== "STAIR" && n.type !== "LIFT") return null;
+          const nodeIdx = route.nodes.findIndex((rn) => rn.id === n.id);
+          if (nodeIdx === -1) return null;
+
+          // Find the next node on the route that is on a DIFFERENT floor
+          const nextDifferentFloorNode = route.nodes.slice(nodeIdx + 1).find((rn) => rn.floorId !== n.floorId);
+          if (!nextDifferentFloorNode) return null;
+
+          const targetFloorObj = publishedData.floors.find((f) => f.id === nextDifferentFloorNode.floorId);
+          const targetFloorName = targetFloorObj?.name || "Upper Floor";
+          const badgeText = `${n.type === "LIFT" ? "Take Lift" : "Take Stairs"} to ${targetFloorName} ↗`;
+          const badgeWidth = badgeText.length * 6.5 + 20;
+
+          return (
+            <g key={`stair-badge-${n.id}`} transform={`translate(${n.x}, ${n.y - 20})`}>
+              <rect
+                x={-badgeWidth / 2}
+                y="-12"
+                width={badgeWidth}
+                height="22"
+                rx="6"
+                fill="#0284c7"
+                stroke="#ffffff"
+                strokeWidth="1.5"
+                className="shadow-lg"
+              />
+              <text
+                x="0"
+                y="3"
+                textAnchor="middle"
+                fill="#ffffff"
+                fontSize="10"
+                fontWeight="bold"
+              >
+                {badgeText}
+              </text>
+            </g>
+          );
+        })}
+
+      {/* Destinations Labels (Tap to open details drawer) */}
+      {allDestinations.map((d) => {
+        const linkedNode = allNodes.find((n) => n.id === d.nodeId);
+        if (!linkedNode || (linkedNode.floorId !== floorId && floorId !== "f-out")) return null;
+        return (
+          <g
+            key={d.id}
+            transform={`translate(${linkedNode.x + 8}, ${linkedNode.y - 6})`}
+            onClick={() => onSelectDestination && onSelectDestination(d)}
+            className="cursor-pointer hover:scale-110 transition-transform"
+          >
+            <text fill="currentColor" className="text-[10px] font-extrabold text-indigo-600 dark:text-indigo-400">
+              ★ {d.name}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* Device GPS Live Marker with Accuracy Circle & Heading Cone */}
+      {gps && gps.isGpsActive && (
+        <g transform={`translate(${gps.canvasPos.x}, ${gps.canvasPos.y})`}>
+          {/* Accuracy Ring */}
+          <circle
+            r={gps.accuracy * 2.5}
+            fill="rgba(59, 130, 246, 0.15)"
+            stroke="#3b82f6"
+            strokeWidth="1.5"
+            strokeDasharray="4 3"
+            className="animate-pulse"
+          />
+          {/* Directional Cone Pointer */}
+          <path
+            d="M 0 -18 L 8 4 L 0 0 L -8 4 Z"
+            fill="#3b82f6"
+            transform={`rotate(${gps.heading})`}
+          />
+          {/* Pulsing Blue GPS Marker Dot */}
+          <circle r="8" fill="#3b82f6" stroke="#ffffff" strokeWidth="2.5" className="shadow-md" />
+        </g>
+      )}
+
+      {/* Live position marker fallback */}
+      {showLiveHere && livePosition && !gps?.isGpsActive && (
+        <g>
+          <circle
+            cx={livePosition.x}
+            cy={livePosition.y}
+            r={12}
+            fill="rgb(var(--success))"
+            opacity={0.3}
+            className="pulse-dot"
+          />
+          <circle
+            cx={livePosition.x}
+            cy={livePosition.y}
+            r={5}
+            fill="rgb(var(--success))"
+            stroke="white"
+            strokeWidth={2}
+          />
+        </g>
+      )}
+
+      {progress !== undefined && route && (
+        <g>
+          <rect x="20" y="20" width="200" height="6" rx="3" fill="rgb(var(--muted))" />
+          <motion.rect
+            initial={{ width: 0 }}
+            animate={{ width: 200 * progress }}
+            transition={{ duration: 0.4 }}
+            x="20"
+            y="20"
+            height="6"
+            rx="3"
+            fill="rgb(var(--primary))"
+          />
+        </g>
+      )}
+    </svg>
+  );
+}
