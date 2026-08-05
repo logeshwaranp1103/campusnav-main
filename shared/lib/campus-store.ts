@@ -1292,11 +1292,9 @@ class CampusStore {
     const groupMap = new Map<string, Node[]>();
 
     const getCanonicalKey = (n: Node) => {
-      if (n.stairGroupId) return `sg_${n.stairGroupId}`;
       const rawName = (n.name || "").replace(/\s*\([^)]*\)/g, "").trim().toLowerCase();
-      if (!rawName) return "";
       const cleaned = rawName
-        .replace(/\b(sts|rs|staircases|staircase|stairs|stair|st)\b/gi, "")
+        .replace(/\b(staircases|staircase|stairs|stair|st)\b/gi, "")
         .replace(/[^a-z0-9]/gi, "")
         .trim();
 
@@ -1304,6 +1302,9 @@ class CampusStore {
         return `stair_${cleaned}`;
       }
 
+      if (n.stairGroupId) return `sg_${n.stairGroupId}`;
+
+      if (!rawName) return "";
       return `stair_${rawName.replace(/[\s\-_]+/g, "_")}`;
     };
 

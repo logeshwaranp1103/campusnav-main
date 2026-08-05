@@ -157,12 +157,9 @@ export function buildAdjacencyGraph(
   }
 
   function getCanonicalStairKey(node: Node): string {
-    if (node.stairGroupId) return `sg_${node.stairGroupId}`;
     const rawName = (node.name || "").replace(/\s*\([^)]*\)/g, "").trim().toLowerCase();
-    if (!rawName) return "";
-    // Strip all stair words/abbreviations ("staircases", "staircase", "stairs", "stair", "sts", "rs", "st")
     const cleaned = rawName
-      .replace(/\b(sts|rs|staircases|staircase|stairs|stair|st)\b/gi, "")
+      .replace(/\b(staircases|staircase|stairs|stair|st)\b/gi, "")
       .replace(/[^a-z0-9]/gi, "")
       .trim();
 
@@ -170,6 +167,9 @@ export function buildAdjacencyGraph(
       return `stair_${cleaned}`;
     }
 
+    if (node.stairGroupId) return `sg_${node.stairGroupId}`;
+
+    if (!rawName) return "";
     return `stair_${rawName.replace(/[\s\-_]+/g, "_")}`;
   }
 
