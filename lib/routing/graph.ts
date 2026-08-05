@@ -1,4 +1,4 @@
-import type { Node, Edge, Obstacle } from "../../shared/data/campus";
+import type { Node, Edge, Obstacle, Floor } from "../../shared/data/campus";
 import { calculateHaversineDistance } from "../geo/haversine";
 
 export type AdjacencyEdge = {
@@ -17,6 +17,7 @@ export type GraphAdjacencyMap = Map<string, AdjacencyEdge[]>;
 
 export interface BuildGraphOptions {
   obstacles?: Obstacle[];
+  floors?: Floor[];
   activeEdgeIds?: Set<string>;
   allowObstaclePenalties?: boolean;
 }
@@ -120,10 +121,14 @@ export function buildAdjacencyGraph(
     edgeId: string,
     type: Edge["type"],
     dist: number,
-    weight: number
+    weight: number,
+    force = false
   ) => {
+    if (!graph.has(from)) graph.set(from, []);
+    if (!graph.has(to)) graph.set(to, []);
+
     const dirKey = `${from}->${to}`;
-    if (addedDirected.has(dirKey)) return;
+    if (addedDirected.has(dirKey) && !force) return;
     addedDirected.add(dirKey);
 
     const adj: AdjacencyEdge = {
@@ -135,10 +140,68 @@ export function buildAdjacencyGraph(
       bidirectional: true,
       weight,
     };
-    const out = graph.get(from) ?? [];
-    out.push(adj);
-    graph.set(from, out);
+    const out = graph.get(from)!;
+    const existingIdx = out.findIndex((item) => item.to === to);
+    if (existingIdx !== -1) {
+      out[existingIdx] = adj;
+    } else {
+      out.push(adj);
+    }
   };
+
+  // ── Helper Floor Ordinals & Stair Canonical Key Normalization ──
+  const floors = options.floors;
+  const floorOrdinalMap = new Map<string, number>();
+  if (floors && Array.isArray(floors)) {
+    floors.forEach((f) => floorOrdinalMap.set(f.id, f.ordinal));
+  }
+
+  function getCanonicalStairKey(node: Node): string {
+    if (node.stairGroupId) return `sg_${node.stairGroupId}`;
+    const rawName = (node.name || "").replace(/\s*\([^)]*\)/g, "").trim().toLowerCase();
+    if (!rawName) return "";
+    // Strip all stair words/abbreviations ("staircases", "staircase", "stairs", "stair", "sts", "rs", "st")
+    const cleaned = rawName
+      .replace(/\b(sts|rs|staircases|staircase|stairs|stair|st)\b/gi, "")
+      .replace(/[^a-z0-9]/gi, "")
+      .trim();
+
+    if (cleaned.length > 0) {
+      return `stair_${cleaned}`;
+    }
+
+    return `stair_${rawName.replace(/[\s\-_]+/g, "_")}`;
+  }
+
+  function getNodeFloorRank(node: Node): number {
+    if (floorOrdinalMap.has(node.floorId)) {
+      return floorOrdinalMap.get(node.floorId)!;
+    }
+    const nameLower = (node.name || "").toLowerCase();
+    const fIdLower = (node.floorId || "").toLowerCase();
+
+    if (
+      nameLower.includes("ground") ||
+      nameLower.includes("gnd") ||
+      fIdLower.includes("ground") ||
+      fIdLower.endsWith("-g") ||
+      fIdLower.endsWith("-gnd") ||
+      fIdLower.endsWith("-0")
+    ) {
+      return 0;
+    }
+
+    if (nameLower.includes("base") || fIdLower.includes("base") || fIdLower.includes("b-")) {
+      return -1;
+    }
+
+    const floorMatch = nameLower.match(/(?:floor|fl|f)\s*(\d+)/i) || fIdLower.match(/(?:floor|fl|f|-)\s*(\d+)/i);
+    if (floorMatch) {
+      return parseInt(floorMatch[1], 10);
+    }
+
+    return 0;
+  }
 
   edges.forEach((e) => {
     const fromId = e.fromNodeId ?? e.from;
@@ -146,6 +209,9 @@ export function buildAdjacencyGraph(
 
     // Ignore edges with invalid or non-existent nodes
     if (!fromId || !toId || !nodeMap.has(fromId) || !nodeMap.has(toId)) return;
+
+    const fn = nodeMap.get(fromId)!;
+    const tn = nodeMap.get(toId)!;
 
     // Exclude explicitly closed edges (runtime-only extended fields)
     const extEdge = e as any;
@@ -168,9 +234,16 @@ export function buildAdjacencyGraph(
     if (e.type === "STAIRS") modePenalty = 2;
     if (e.type === "LIFT") modePenalty = 1;
 
+    // Filter out direct non-adjacent multi-floor stair/lift shortcuts (e.g. Ground -> Floor 2 directly)
+    if (e.type === "STAIRS" || e.type === "LIFT") {
+      const rankA = getNodeFloorRank(fn);
+      const rankB = getNodeFloorRank(tn);
+      if (Math.abs(rankA - rankB) > 1) {
+        return; // Skip direct non-adjacent jump; sequential floor-by-floor stair builder below handles r -> r+1 -> r+2
+      }
+    }
+
     // Compute distance: use explicit e.distance if provided (>0), otherwise check vertical transition or canvas distance
-    const fn = nodeMap.get(fromId)!;
-    const tn = nodeMap.get(toId)!;
     let computedDist = typeof e.distance === "number" && e.distance > 0 ? e.distance : 0;
 
     if (!computedDist && fn && tn) {
@@ -196,11 +269,12 @@ export function buildAdjacencyGraph(
   });
 
   // ── Ensure consecutive vertical STAIRS edges link stair nodes in exact floor order ──
-  // Group stair nodes by stairGroupId or matching base stair name, then connect consecutive floor levels
   const stairGroupNodesMap = new Map<string, Node[]>();
+
+  // 1. Group by explicit stairGroupId or canonical normalized stair key
   nodes.forEach((n) => {
     if (n.type === "STAIR" || n.stairGroupId) {
-      const baseKey = n.stairGroupId || (n.name || "").replace(/\s*\([^)]*\)/g, "").trim().toLowerCase();
+      const baseKey = getCanonicalStairKey(n);
       if (baseKey) {
         const list = stairGroupNodesMap.get(baseKey) || [];
         list.push(n);
@@ -209,42 +283,104 @@ export function buildAdjacencyGraph(
     }
   });
 
+  // 2. Spatial proximity fallback: merge stair nodes on different floors within 150px 2D distance column
+  const allStairNodes = nodes.filter((n) => n.type === "STAIR" || n.stairGroupId);
+  for (let i = 0; i < allStairNodes.length; i++) {
+    for (let j = i + 1; j < allStairNodes.length; j++) {
+      const n1 = allStairNodes[i];
+      const n2 = allStairNodes[j];
+      if (n1.floorId === n2.floorId) continue;
+
+      const dist2D = Math.hypot(n1.x - n2.x, n1.y - n2.y);
+      if (dist2D <= 150) {
+        const k1 = getCanonicalStairKey(n1) || `pos_${Math.round(n1.x / 40)}_${Math.round(n1.y / 40)}`;
+        const k2 = getCanonicalStairKey(n2) || `pos_${Math.round(n2.x / 40)}_${Math.round(n2.y / 40)}`;
+        if (k1 && k2 && k1 !== k2) {
+          const list1 = stairGroupNodesMap.get(k1) || [n1];
+          const list2 = stairGroupNodesMap.get(k2) || [n2];
+          const merged = Array.from(new Set([...list1, ...list2]));
+          stairGroupNodesMap.set(k1, merged);
+          stairGroupNodesMap.delete(k2);
+        }
+      }
+    }
+  }
+
   stairGroupNodesMap.forEach((groupNodes) => {
-    if (groupNodes.length >= 2) {
-      // Sort nodes in floor sequence: Ground/Basement -> Floor 1 -> Floor 2 -> Floor 3 ...
-      groupNodes.sort((a, b) => {
-        const getFloorRank = (n: Node) => {
-          // Extract floor portion inside parentheses, e.g. "STAIRS 1 (RP · Floor 2)" -> "rp · floor 2)"
-          const nameParts = (n.name || "").split("(");
-          const floorText = (nameParts.length > 1 ? nameParts[nameParts.length - 1] : n.name || "").toLowerCase();
+    if (groupNodes.length >= 1) {
+      groupNodes.sort((a, b) => getNodeFloorRank(a) - getNodeFloorRank(b));
 
-          if (floorText.includes("base") || floorText.includes("b-") || floorText.includes("basement")) return -1;
-          if (floorText.includes("ground") || floorText.includes("gnd") || floorText.includes("g)") || floorText.includes(" 0")) return 0;
+      const minRank = getNodeFloorRank(groupNodes[0]);
+      const maxRank = getNodeFloorRank(groupNodes[groupNodes.length - 1]);
 
-          const match = floorText.match(/\d+/);
-          if (match) {
-            return parseInt(match[0], 10);
+      const sequentialNodes: Node[] = [];
+      for (let r = minRank; r <= maxRank; r++) {
+        let nodeOnRank = groupNodes.find((n) => getNodeFloorRank(n) === r);
+        if (!nodeOnRank) {
+          const targetFloor = floors?.find((f) => f.ordinal === r);
+          const refNode = groupNodes[0];
+          const virtualId = `stair-auto-inter-${refNode.id}-r${r}`;
+          nodeOnRank = nodeMap.get(virtualId);
+          if (!nodeOnRank) {
+            nodeOnRank = {
+              id: virtualId,
+              type: "STAIR",
+              name: `${refNode.name || "Stairs"} (Floor ${r})`,
+              floorId: targetFloor?.id ?? `f-auto-r${r}`,
+              x: refNode.x,
+              y: refNode.y,
+            };
+            nodeMap.set(virtualId, nodeOnRank);
+            if (!graph.has(virtualId)) graph.set(virtualId, []);
           }
+        }
+        sequentialNodes.push(nodeOnRank);
+      }
 
-          const fIdLower = (n.floorId || "").toLowerCase();
-          if (fIdLower.includes("base") || fIdLower.includes("b-")) return -1;
-          if (fIdLower.includes("ground") || fIdLower.endsWith("-g") || fIdLower.includes("-0")) return 0;
-
-          const fIdMatch = fIdLower.match(/\d+/);
-          return fIdMatch ? parseInt(fIdMatch[0], 10) : 1;
-        };
-        return getFloorRank(a) - getFloorRank(b);
-      });
-
-      for (let i = 0; i < groupNodes.length - 1; i++) {
-        const fn = groupNodes[i];
-        const tn = groupNodes[i + 1];
+      for (let i = 0; i < sequentialNodes.length - 1; i++) {
+        const fn = sequentialNodes[i];
+        const tn = sequentialNodes[i + 1];
         if (fn.floorId !== tn.floorId) {
           const autoStairEdgeId = `e-stair-seq-${fn.id}-${tn.id}`;
           const dist = 15;
           const weight = 17; // 15m + 2 penalty for STAIRS
-          addDirectedEdge(fn.id, tn.id, autoStairEdgeId, "STAIRS", dist, weight);
-          addDirectedEdge(tn.id, fn.id, `${autoStairEdgeId}_rev`, "STAIRS", dist, weight);
+          addDirectedEdge(fn.id, tn.id, autoStairEdgeId, "STAIRS", dist, weight, true);
+          addDirectedEdge(tn.id, fn.id, `${autoStairEdgeId}_rev`, "STAIRS", dist, weight, true);
+        }
+      }
+    }
+  });
+
+  // ── Ensure every stair node is connected to nearest node on the same floor ──
+  nodes.forEach((stairNode) => {
+    if (stairNode.type === "STAIR" || stairNode.stairGroupId) {
+      const sameFloorNodes = nodes.filter(
+        (n) => n.floorId === stairNode.floorId && n.id !== stairNode.id
+      );
+
+      const currentEdges = graph.get(stairNode.id) ?? [];
+      const hasSameFloorLink = currentEdges.some((adj) => {
+        const target = nodeMap.get(adj.to);
+        return target && target.floorId === stairNode.floorId;
+      });
+
+      if (!hasSameFloorLink && sameFloorNodes.length > 0) {
+        let closest: Node | null = null;
+        let minDist = Infinity;
+        sameFloorNodes.forEach((n) => {
+          const d = Math.hypot(n.x - stairNode.x, n.y - stairNode.y);
+          if (d < minDist) {
+            minDist = d;
+            closest = n;
+          }
+        });
+
+        if (closest && minDist <= 300) {
+          const targetNode = closest as Node;
+          const autoFloorEdgeId = `e-stair-floorlink-${stairNode.id}-${targetNode.id}`;
+          const dist = Math.max(1, Math.round(minDist / 4));
+          addDirectedEdge(stairNode.id, targetNode.id, autoFloorEdgeId, "WALK", dist, dist, true);
+          addDirectedEdge(targetNode.id, stairNode.id, `${autoFloorEdgeId}_rev`, "WALK", dist, dist, true);
         }
       }
     }

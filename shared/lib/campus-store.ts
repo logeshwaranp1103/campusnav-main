@@ -212,6 +212,7 @@ class CampusStore {
           this.syncVerticalGroupPositions();
           // Rebuild stair group connections on load to heal any stale vertical stair edges stored in localStorage
           (this.stairGroups || []).forEach((sg) => this.rebuildStairGroupConnections(sg));
+          this.autoConnectMatchingVerticalNodesAcrossFloors();
           loadedValidData = true;
         }
       }
@@ -1290,20 +1291,50 @@ class CampusStore {
     const stairNodes = this.nodes.filter((n) => n.type === "STAIR" || n.stairGroupId);
     const groupMap = new Map<string, Node[]>();
 
-    stairNodes.forEach((n) => {
-      // Group strictly by explicit stairGroupId or exact matching stair name
-      const nameKey = (n.name || "")
-        .replace(/\s*\([^)]*\)/g, "")
-        .trim()
-        .toLowerCase();
-      const key = n.stairGroupId || (nameKey.length > 0 ? nameKey : null);
+    const getCanonicalKey = (n: Node) => {
+      if (n.stairGroupId) return `sg_${n.stairGroupId}`;
+      const rawName = (n.name || "").replace(/\s*\([^)]*\)/g, "").trim().toLowerCase();
+      if (!rawName) return "";
+      const cleaned = rawName
+        .replace(/\b(sts|rs|staircases|staircase|stairs|stair|st)\b/gi, "")
+        .replace(/[^a-z0-9]/gi, "")
+        .trim();
 
+      if (cleaned.length > 0) {
+        return `stair_${cleaned}`;
+      }
+
+      return `stair_${rawName.replace(/[\s\-_]+/g, "_")}`;
+    };
+
+    stairNodes.forEach((n) => {
+      const key = getCanonicalKey(n);
       if (key) {
         const list = groupMap.get(key) || [];
         list.push(n);
         groupMap.set(key, list);
       }
     });
+
+    // Merge spatially aligned stair nodes (within 150px 2D column distance across different floors)
+    for (let i = 0; i < stairNodes.length; i++) {
+      for (let j = i + 1; j < stairNodes.length; j++) {
+        const n1 = stairNodes[i];
+        const n2 = stairNodes[j];
+        if (n1.floorId === n2.floorId) continue;
+        if (Math.hypot(n1.x - n2.x, n1.y - n2.y) <= 150) {
+          const k1 = getCanonicalKey(n1) || `pos_${Math.round(n1.x / 40)}_${Math.round(n1.y / 40)}`;
+          const k2 = getCanonicalKey(n2) || `pos_${Math.round(n2.x / 40)}_${Math.round(n2.y / 40)}`;
+          if (k1 && k2 && k1 !== k2) {
+            const list1 = groupMap.get(k1) || [n1];
+            const list2 = groupMap.get(k2) || [n2];
+            const merged = Array.from(new Set([...list1, ...list2]));
+            groupMap.set(k1, merged);
+            groupMap.delete(k2);
+          }
+        }
+      }
+    }
 
     let createdAny = false;
 
@@ -1372,10 +1403,19 @@ class CampusStore {
   }
 
   private rebuildStairGroupConnections(group: StairGroup, basePos?: { x: number; y: number }) {
-    // Get ordered floors
-    const buildingFloors = this.floors
-      .filter((f) => group.connectedFloorIds.includes(f.id))
-      .sort((a, b) => a.ordinal - b.ordinal);
+    // Get all connected floors and fill any intermediate floor gaps (min ordinal to max ordinal)
+    const rawConnectedFloors = this.floors.filter((f) => group.connectedFloorIds.includes(f.id));
+    let buildingFloors = rawConnectedFloors.sort((a, b) => a.ordinal - b.ordinal);
+
+    if (buildingFloors.length >= 2) {
+      const minOrdinal = buildingFloors[0].ordinal;
+      const maxOrdinal = buildingFloors[buildingFloors.length - 1].ordinal;
+      const targetBldId = buildingFloors[0].buildingId;
+
+      buildingFloors = this.floors
+        .filter((f) => f.buildingId === targetBldId && f.ordinal >= minOrdinal && f.ordinal <= maxOrdinal)
+        .sort((a, b) => a.ordinal - b.ordinal);
+    }
 
     const existingNode = this.nodes.find((n) => n.stairGroupId === group.id);
     const refX = basePos?.x ?? existingNode?.x ?? 300;

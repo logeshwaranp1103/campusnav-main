@@ -12,6 +12,7 @@ import {
   Sparkles,
   Compass,
   PencilRuler,
+  Footprints,
 } from "lucide-react";
 import { PageHeader } from "@/features/admin/components/page-header";
 import { Card, CardTitle, CardDescription } from "@/shared/components/ui/card";
@@ -22,6 +23,7 @@ import { campusStore } from "@/shared/lib/campus-store";
 const quickActions = [
   { href: "/admin/editor", label: "CAD Canvas Editor", description: "Interactive full-screen CAD editor for buildings, nodes, edges & hazards", badge: "Primary" },
   { href: "/admin/buildings", label: "Manage Buildings", description: "Create and configure campus building shapes" },
+  { href: "/admin/stairs", label: "Manage Stairs", description: "Configure multi-floor staircases & vertical routes" },
   { href: "/admin/nodes", label: "Manage Nodes", description: "View and edit campus graph nodes" },
   { href: "/admin/edges", label: "Manage Edges", description: "Configure connections between nodes" },
   { href: "/admin/simulator", label: "Route Simulator", description: "Test pathfinding and shortest path calculations" },
@@ -41,6 +43,7 @@ export default function AdminHome() {
   const stats = [
     { label: "Buildings", value: storeData.buildings.length, icon: Building2, href: "/admin/buildings" },
     { label: "Floors", value: storeData.floors.length, icon: Layers, href: "/admin/floors" },
+    { label: "Stairs", value: storeData.stairGroups.length, icon: Footprints, href: "/admin/stairs" },
     { label: "Nodes", value: storeData.nodes.length, icon: Waypoints, href: "/admin/nodes" },
     { label: "Edges", value: storeData.edges.length, icon: GitFork, href: "/admin/edges" },
     { label: "Destinations", value: storeData.destinations.length, icon: DoorOpen, href: "/admin/search" },
@@ -85,7 +88,7 @@ export default function AdminHome() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
         {stats.map((s) => {
           const Icon = s.icon;
           return (

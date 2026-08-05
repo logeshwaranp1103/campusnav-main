@@ -16,6 +16,7 @@ import {
   History,
   Compass,
   ChevronLeft,
+  Footprints,
   type LucideIcon,
 } from "lucide-react";
 import { useAdminAuth } from "@/features/admin/components/admin-guard";
@@ -40,6 +41,7 @@ export const adminNavGroups: { title: string; items: NavItem[] }[] = [
       { href: "/admin/nodes", label: "Nodes", icon: Waypoints },
       { href: "/admin/edges", label: "Edges", icon: GitFork },
       { href: "/admin/obstacles", label: "Obstacles", icon: AlertTriangle },
+      { href: "/admin/stairs", label: "Stairs", icon: Footprints },
     ],
   },
   {

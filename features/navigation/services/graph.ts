@@ -31,27 +31,17 @@ export function shortestPath(
   if (!startId || !endId) return null;
 
   const work = campusStore.getWorkingData();
-  const pub = campusStore.getPublishedData();
-
-  let bestResult: Route | null = null;
-
   if (work.nodes.length > 0) {
     const workResult = computeShortestPathForData(work, startId, endId);
-    if (workResult) {
-      bestResult = workResult;
-    }
+    if (workResult) return workResult;
   }
 
+  const pub = campusStore.getPublishedData();
   if (pub.nodes.length > 0) {
-    const pubResult = computeShortestPathForData(pub, startId, endId);
-    if (pubResult) {
-      if (!bestResult || pubResult.distance < bestResult.distance) {
-        bestResult = pubResult;
-      }
-    }
+    return computeShortestPathForData(pub, startId, endId);
   }
 
-  return bestResult;
+  return null;
 }
 
 function computeShortestPathForData(
@@ -66,10 +56,11 @@ function computeShortestPathForData(
   // Pass 1: Primary strict graph — hard-blocks all obstacle edges to guarantee obstacle avoidance
   const { graph: primaryGraph, nodeMap } = buildAdjacencyGraph(data.nodes, data.edges, {
     obstacles,
+    floors: data.floors,
     allowObstaclePenalties: false,
   });
 
-  // Aggregating helper to collect ALL candidate node IDs for a building / destination / node ID / text query
+  // Aggregating helper to collect candidate node IDs for a location query
   const resolveNodeIds = (paramId: string): string[] => {
     if (!paramId) return [];
     const normalized = paramId.trim().toLowerCase();
@@ -77,109 +68,71 @@ function computeShortestPathForData(
 
     // 1. Direct node ID match
     if (nodeMap.has(paramId)) {
-      candidateIds.add(paramId);
+      return [paramId];
     }
 
-    // 2. Direct node name match
-    data.nodes.forEach((n) => {
-      if (n.name && n.name.toLowerCase() === normalized) {
-        candidateIds.add(n.id);
-      }
-    });
+    // 2. Direct exact node name match
+    const exactNameNodes = data.nodes.filter(
+      (n) => n.name && n.name.trim().toLowerCase() === normalized
+    );
+    if (exactNameNodes.length > 0) {
+      return exactNameNodes.map((n) => n.id);
+    }
 
-    // 3. Destination match (by ID first, then exact name, or alias)
-    const exactDest = data.destinations.find((d) => d.id === paramId);
+    // 3. Destination match (by ID, exact name, or alias)
+    const exactDest = data.destinations.find(
+      (d) => d.id === paramId || d.name.trim().toLowerCase() === normalized
+    );
     if (exactDest && exactDest.nodeId && nodeMap.has(exactDest.nodeId)) {
       return [exactDest.nodeId];
     }
 
-    data.destinations.forEach((d) => {
-      const matchName = d.name.toLowerCase() === normalized;
-      const matchAlias = d.aliases && d.aliases.some((a) => a.toLowerCase() === normalized);
-      if ((matchName || matchAlias) && d.nodeId && nodeMap.has(d.nodeId)) {
-        candidateIds.add(d.nodeId);
-      }
+    const matchingDests = data.destinations.filter((d) => {
+      const matchName = d.name.trim().toLowerCase() === normalized;
+      const matchAlias = d.aliases && d.aliases.some((a) => a.trim().toLowerCase() === normalized);
+      return (matchName || matchAlias) && d.nodeId && nodeMap.has(d.nodeId);
     });
+    if (matchingDests.length > 0) {
+      return matchingDests.map((d) => d.nodeId);
+    }
 
-    // 4. Building match (by ID, name, shortCode, or name inclusion)
+    // 4. Strict Building match (ONLY for exact building code or exact building name)
     const building = data.buildings.find(
       (b) =>
         b.id === paramId ||
-        b.name.toLowerCase() === normalized ||
-        (b.shortCode && b.shortCode.toLowerCase() === normalized) ||
-        b.name.toLowerCase().includes(normalized) ||
-        normalized.includes(b.name.toLowerCase())
+        b.name.trim().toLowerCase() === normalized ||
+        (b.shortCode && b.shortCode.trim().toLowerCase() === normalized)
     );
 
     if (building) {
-      const floorBuildingMap = new Map<string, string>();
-      data.floors.forEach((f) => floorBuildingMap.set(f.id, f.buildingId));
-
-      // 4a. Nodes explicitly linked to this building's floors or buildingId property
       const buildingFloorIds = new Set(
         data.floors.filter((f) => f.buildingId === building.id).map((f) => f.id)
       );
+      // Prefer entrance nodes or ground floor nodes of the building
+      const entranceNodes = data.nodes.filter(
+        (n) =>
+          buildingFloorIds.has(n.floorId) &&
+          (n.type === "ENTRANCE" || n.type === "BUILDING_ENTRANCE" || n.isEntranceNode)
+      );
+      if (entranceNodes.length > 0) {
+        return entranceNodes.map((n) => n.id);
+      }
+
       data.nodes.forEach((n) => {
-        if (
-          buildingFloorIds.has(n.floorId) ||
-          (n as unknown as { buildingId?: string }).buildingId === building.id
-        ) {
+        if (buildingFloorIds.has(n.floorId)) {
           candidateIds.add(n.id);
         }
       });
-
-      // 4b. ONLY IF no explicit floor/building nodes were found, check spatial bounds
-      if (candidateIds.size === 0) {
-        const bx = building.x ?? 0;
-        const by = building.y ?? 0;
-        const bw = building.width ?? 180;
-        const bh = building.height ?? 120;
-        const margin = 30; // tight margin to prevent capturing nodes from neighboring buildings
-
-        data.nodes.forEach((n) => {
-          const nodeBldId = floorBuildingMap.get(n.floorId);
-          if (nodeBldId && nodeBldId !== building.id) return;
-
-          if (
-            n.x >= bx - margin &&
-            n.x <= bx + bw + margin &&
-            n.y >= by - margin &&
-            n.y <= by + bh + margin
-          ) {
-            candidateIds.add(n.id);
-          }
-        });
-      }
-
-      // 4c. Fallback if no nodes are within box: get closest nodes to building center (excluding other building floor nodes)
-      if (candidateIds.size === 0) {
-        const bx = building.x ?? 0;
-        const by = building.y ?? 0;
-        const bw = building.width ?? 180;
-        const bh = building.height ?? 120;
-        const centerX = bx + bw / 2;
-        const centerY = by + bh / 2;
-        const sorted = [...data.nodes]
-          .filter((n) => {
-            const nodeBldId = floorBuildingMap.get(n.floorId);
-            return !nodeBldId || nodeBldId === building.id;
-          })
-          .sort((a, b) => {
-            const dA = Math.hypot(a.x - centerX, a.y - centerY);
-            const dB = Math.hypot(b.x - centerX, b.y - centerY);
-            return dA - dB;
-          });
-        sorted.slice(0, 3).forEach((n) => candidateIds.add(n.id));
-      }
+      if (candidateIds.size > 0) return Array.from(candidateIds);
     }
 
-    if (candidateIds.size > 0) return Array.from(candidateIds);
-
-    // 5. Partial string match on node names
-    const matchingNodes = data.nodes.filter(
-      (n) => n.name && n.name.toLowerCase().includes(normalized)
+    // 5. Fallback: partial name match on nodes
+    const partialNodes = data.nodes.filter(
+      (n) => n.name && n.name.trim().toLowerCase().includes(normalized)
     );
-    if (matchingNodes.length > 0) return matchingNodes.map((n) => n.id);
+    if (partialNodes.length > 0) {
+      return partialNodes.map((n) => n.id);
+    }
 
     return [];
   };
@@ -210,6 +163,7 @@ function computeShortestPathForData(
   if (!bestResult) {
     const { graph: fallbackGraph } = buildAdjacencyGraph(data.nodes, data.edges, {
       obstacles,
+      floors: data.floors,
       allowObstaclePenalties: true,
     });
 
