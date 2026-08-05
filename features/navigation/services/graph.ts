@@ -24,18 +24,34 @@ export type Route = {
 
 const WALK_SPEED = 1.3; // m/s
 
+import { validateCampusGraph } from "@/shared/lib/graph-validator";
+
 export function shortestPath(
   startId: string,
-  endId: string
+  endId: string,
+  options?: { isDraftMode?: boolean }
 ): Route | null {
   if (!startId || !endId) return null;
 
+  const isDraft = options?.isDraftMode ?? false;
   const work = campusStore.getWorkingData();
-  if (work.nodes.length > 0) {
+
+  if (isDraft) {
+    // Admin Draft Mode: Stay strictly in draft context to display exact error diagnostics
+    if (work.nodes.length > 0) {
+      return computeShortestPathForData(work, startId, endId);
+    }
+    return null;
+  }
+
+  // User Published Mode: Validate graph. If valid, use working data directly
+  const healthReport = validateCampusGraph(work);
+  if (healthReport.canPublish && work.nodes.length > 0) {
     const workResult = computeShortestPathForData(work, startId, endId);
     if (workResult) return workResult;
   }
 
+  // Graceful Fallback: Use last published valid snapshot if draft has critical errors
   const pub = campusStore.getPublishedData();
   if (pub.nodes.length > 0) {
     return computeShortestPathForData(pub, startId, endId);
@@ -71,11 +87,18 @@ function computeShortestPathForData(
       return [paramId];
     }
 
-    // 2. Direct exact node name match
+    // 2. Direct exact node name match (Ground / Entrance node priority)
     const exactNameNodes = data.nodes.filter(
       (n) => n.name && n.name.trim().toLowerCase() === normalized
     );
     if (exactNameNodes.length > 0) {
+      const groundOrEntrance = exactNameNodes.filter((n) => {
+        const floor = data.floors.find((f) => f.id === n.floorId);
+        return (floor && floor.ordinal === 0) || n.type === "ENTRANCE" || n.type === "BUILDING_ENTRANCE" || n.isEntranceNode;
+      });
+      if (groundOrEntrance.length > 0) {
+        return groundOrEntrance.map((n) => n.id);
+      }
       return exactNameNodes.map((n) => n.id);
     }
 
@@ -83,8 +106,18 @@ function computeShortestPathForData(
     const exactDest = data.destinations.find(
       (d) => d.id === paramId || d.name.trim().toLowerCase() === normalized
     );
-    if (exactDest && exactDest.nodeId && nodeMap.has(exactDest.nodeId)) {
-      return [exactDest.nodeId];
+    if (exactDest) {
+      const matchingGroundNode = data.nodes.find((n) => {
+        const isSameName = n.name && n.name.trim().toLowerCase() === exactDest.name.trim().toLowerCase();
+        const floor = data.floors.find((f) => f.id === n.floorId);
+        return isSameName && ((floor && floor.ordinal === 0) || n.type === "ENTRANCE" || n.type === "BUILDING_ENTRANCE" || n.isEntranceNode);
+      });
+      if (matchingGroundNode) {
+        return [matchingGroundNode.id];
+      }
+      if (exactDest.nodeId && nodeMap.has(exactDest.nodeId)) {
+        return [exactDest.nodeId];
+      }
     }
 
     const matchingDests = data.destinations.filter((d) => {

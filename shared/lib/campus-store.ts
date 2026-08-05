@@ -426,6 +426,7 @@ class CampusStore {
   }
 
   public getWorkingData() {
+    this.autoConnectMatchingVerticalNodesAcrossFloors();
     return {
       campus: this.campus,
       buildings: [...this.buildings],
@@ -1292,6 +1293,14 @@ class CampusStore {
     const groupMap = new Map<string, Node[]>();
 
     const getCanonicalKey = (n: Node) => {
+      // 1. stairGroupId (primary)
+      if (n.stairGroupId) return `sg_${n.stairGroupId}`;
+
+      // 2. Stable internal connector ID
+      const ext = n as any;
+      if (ext.connectorId) return `conn_${ext.connectorId}`;
+
+      // 3. Canonical name (legacy compatibility fallback only)
       const rawName = (n.name || "").replace(/\s*\([^)]*\)/g, "").trim().toLowerCase();
       const cleaned = rawName
         .replace(/\b(staircases|staircase|stairs|stair|st)\b/gi, "")
@@ -1301,8 +1310,6 @@ class CampusStore {
       if (cleaned.length > 0) {
         return `stair_${cleaned}`;
       }
-
-      if (n.stairGroupId) return `sg_${n.stairGroupId}`;
 
       if (!rawName) return "";
       return `stair_${rawName.replace(/[\s\-_]+/g, "_")}`;
@@ -1338,6 +1345,45 @@ class CampusStore {
     }
 
     let createdAny = false;
+
+    // Auto-connect stair landings to nearest same-floor node
+    stairNodes.forEach((stairNode) => {
+      const sameFloorNodes = this.nodes.filter(
+        (n) => n.floorId === stairNode.floorId && n.id !== stairNode.id
+      );
+
+      if (sameFloorNodes.length > 0) {
+        let closest: Node | null = null;
+        let minDist = Infinity;
+        sameFloorNodes.forEach((n) => {
+          const d = Math.hypot(n.x - stairNode.x, n.y - stairNode.y);
+          if (d < minDist) {
+            minDist = d;
+            closest = n;
+          }
+        });
+
+        if (closest && minDist <= 500) {
+          const targetNode = closest as Node;
+          const edgeId = `e-stair-hlink-${stairNode.id}-${targetNode.id}`;
+          const dist = Math.max(1, Math.round(minDist / 4));
+          const exists = this.edges.some(
+            (e) => (e.from === stairNode.id && e.to === targetNode.id) || (e.from === targetNode.id && e.to === stairNode.id)
+          );
+          if (!exists) {
+            this.addEdgeInternal({
+              id: edgeId,
+              from: stairNode.id,
+              to: targetNode.id,
+              type: "WALK",
+              distance: dist,
+              bidirectional: true,
+            });
+            createdAny = true;
+          }
+        }
+      }
+    });
 
     groupMap.forEach((nodesInGroup) => {
       if (nodesInGroup.length >= 2) {

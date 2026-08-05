@@ -127,7 +127,7 @@ export function buildAdjacencyGraph(
     if (!graph.has(from)) graph.set(from, []);
     if (!graph.has(to)) graph.set(to, []);
 
-    const dirKey = `${from}->${to}`;
+    const dirKey = `${from}->${to}:${type}:${dist}`;
     if (addedDirected.has(dirKey) && !force) return;
     addedDirected.add(dirKey);
 
@@ -157,6 +157,14 @@ export function buildAdjacencyGraph(
   }
 
   function getCanonicalStairKey(node: Node): string {
+    // 1. stairGroupId (primary)
+    if (node.stairGroupId) return `sg_${node.stairGroupId}`;
+
+    // 2. Stable internal connector ID
+    const ext = node as any;
+    if (ext.connectorId) return `conn_${ext.connectorId}`;
+
+    // 3. Canonical name (legacy compatibility fallback only)
     const rawName = (node.name || "").replace(/\s*\([^)]*\)/g, "").trim().toLowerCase();
     const cleaned = rawName
       .replace(/\b(staircases|staircase|stairs|stair|st)\b/gi, "")
@@ -166,8 +174,6 @@ export function buildAdjacencyGraph(
     if (cleaned.length > 0) {
       return `stair_${cleaned}`;
     }
-
-    if (node.stairGroupId) return `sg_${node.stairGroupId}`;
 
     if (!rawName) return "";
     return `stair_${rawName.replace(/[\s\-_]+/g, "_")}`;
@@ -353,18 +359,17 @@ export function buildAdjacencyGraph(
 
   // ── Ensure every stair node is connected to nearest node on the same floor ──
   nodes.forEach((stairNode) => {
-    if (stairNode.type === "STAIR" || stairNode.stairGroupId) {
+    const isStair =
+      stairNode.type === "STAIR" ||
+      Boolean(stairNode.stairGroupId) ||
+      (stairNode.name && /stair|sts|rs/i.test(stairNode.name));
+
+    if (isStair) {
       const sameFloorNodes = nodes.filter(
         (n) => n.floorId === stairNode.floorId && n.id !== stairNode.id
       );
 
-      const currentEdges = graph.get(stairNode.id) ?? [];
-      const hasSameFloorLink = currentEdges.some((adj) => {
-        const target = nodeMap.get(adj.to);
-        return target && target.floorId === stairNode.floorId;
-      });
-
-      if (!hasSameFloorLink && sameFloorNodes.length > 0) {
+      if (sameFloorNodes.length > 0) {
         let closest: Node | null = null;
         let minDist = Infinity;
         sameFloorNodes.forEach((n) => {
@@ -375,7 +380,7 @@ export function buildAdjacencyGraph(
           }
         });
 
-        if (closest && minDist <= 300) {
+        if (closest && minDist <= 500) {
           const targetNode = closest as Node;
           const autoFloorEdgeId = `e-stair-floorlink-${stairNode.id}-${targetNode.id}`;
           const dist = Math.max(1, Math.round(minDist / 4));
