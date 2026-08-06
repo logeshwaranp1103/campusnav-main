@@ -1524,6 +1524,7 @@ class CampusStore {
       });
     }
 
+    
     // Consecutive vertical stair edges created without auto-connecting to floor nodes
   }
 
