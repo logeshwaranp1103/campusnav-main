@@ -143,7 +143,9 @@ export function buildAdjacencyGraph(
     const out = graph.get(from)!;
     const existingIdx = out.findIndex((item) => item.to === to);
     if (existingIdx !== -1) {
-      out[existingIdx] = adj;
+      if (!force) {
+        out[existingIdx] = adj;
+      }
     } else {
       out.push(adj);
     }

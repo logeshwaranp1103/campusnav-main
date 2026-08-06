@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useRef, useMemo } from "react";
+import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Building2,
@@ -155,6 +156,17 @@ function DimensionInput({
 export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: ToolMode }) {
   const [storeData, setStoreData] = useState(campusStore.getWorkingData());
   const [pendingChanges, setPendingChanges] = useState<PendingChange[]>(campusStore.getPendingChanges());
+
+  // Subscribe to live campusStore changes for instant CAD canvas update without page refresh
+  useEffect(() => {
+    setStoreData(campusStore.getWorkingData());
+    setPendingChanges(campusStore.getPendingChanges());
+    const unsubscribe = campusStore.subscribe(() => {
+      setStoreData(campusStore.getWorkingData());
+      setPendingChanges(campusStore.getPendingChanges());
+    });
+    return unsubscribe;
+  }, []);
   const [activeTool, setActiveTool] = useState<ToolMode>(initialTool);
   const [activeFloorId, setActiveFloorId] = useState<string>("f-out");
 
@@ -316,8 +328,7 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
   const hasDraggedRef = useRef(false);
   const mouseDownScreenPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  // Focus / Highlight Target
-  const [focusedPos, setFocusedPos] = useState<{ x: number; y: number } | null>(null);
+
 
   const [edgeStartNodeId, setEdgeStartNodeId] = useState<string | null>(null);
   const [mouseCanvasPos, setMouseCanvasPos] = useState<{ x: number; y: number }>({ x: 400, y: 400 });
@@ -376,6 +387,131 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
   const panOffsetRef = useRef(panOffset);
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
   useEffect(() => { panOffsetRef.current = panOffset; }, [panOffset]);
+
+  // Handle URL focus query parameter to automatically center and highlight target entity on CAD canvas
+  const searchParams = useSearchParams();
+  const focusParamId = searchParams.get("focus") || searchParams.get("select");
+
+  useEffect(() => {
+    if (!focusParamId) return;
+
+    let targetX: number | null = null;
+    let targetY: number | null = null;
+    let targetFloorId: string | null = null;
+    let selectedType: any = null;
+
+    // 1. Building
+    const bld = storeData.buildings.find((b) => b.id === focusParamId);
+    if (bld && bld.x !== undefined && bld.y !== undefined) {
+      targetX = bld.x + (bld.width ?? 180) / 2;
+      targetY = bld.y + (bld.height ?? 120) / 2;
+      selectedType = { type: "building", id: bld.id };
+    }
+
+    // 2. Node
+    if (targetX === null) {
+      const node = storeData.nodes.find((n) => n.id === focusParamId);
+      if (node) {
+        targetX = node.x;
+        targetY = node.y;
+        targetFloorId = node.floorId;
+        selectedType = { type: "node", id: node.id };
+      }
+    }
+
+    // 3. Destination / Room
+    if (targetX === null) {
+      const dest = storeData.destinations.find((d) => d.id === focusParamId);
+      if (dest && dest.x !== undefined && dest.y !== undefined) {
+        targetX = dest.x;
+        targetY = dest.y;
+        targetFloorId = dest.floorId || null;
+        selectedType = { type: "destination", id: dest.id };
+      }
+    }
+
+    // 4. Floor
+    if (targetX === null) {
+      const fl = storeData.floors.find((f) => f.id === focusParamId);
+      if (fl) {
+        targetFloorId = fl.id;
+        const bldOfFloor = storeData.buildings.find((b) => b.id === fl.buildingId);
+        if (bldOfFloor && bldOfFloor.x !== undefined && bldOfFloor.y !== undefined) {
+          targetX = bldOfFloor.x + (bldOfFloor.width ?? 180) / 2;
+          targetY = bldOfFloor.y + (bldOfFloor.height ?? 120) / 2;
+        }
+      }
+    }
+
+    // 5. Edge
+    if (targetX === null) {
+      const edge = storeData.edges.find((e) => e.id === focusParamId);
+      if (edge) {
+        const fromNode = storeData.nodes.find((n) => n.id === edge.from);
+        if (fromNode) {
+          targetX = fromNode.x;
+          targetY = fromNode.y;
+          targetFloorId = fromNode.floorId;
+          selectedType = { type: "edge", id: edge.id };
+        }
+      }
+    }
+
+    // 6. Stair Group
+    if (targetX === null) {
+      const stairNode = storeData.nodes.find((n) => n.stairGroupId === focusParamId);
+      if (stairNode) {
+        targetX = stairNode.x;
+        targetY = stairNode.y;
+        targetFloorId = stairNode.floorId;
+        selectedType = { type: "stairGroup", id: focusParamId };
+      }
+    }
+
+    // 7. Lift Group
+    if (targetX === null) {
+      const liftNode = storeData.nodes.find((n) => n.liftGroupId === focusParamId);
+      if (liftNode) {
+        targetX = liftNode.x;
+        targetY = liftNode.y;
+        targetFloorId = liftNode.floorId;
+        selectedType = { type: "liftGroup", id: focusParamId };
+      }
+    }
+
+    // 8. Obstacle
+    if (targetX === null) {
+      const obs = (storeData.obstacles || []).find((o) => o.id === focusParamId);
+      if (obs && obs.x !== undefined && obs.y !== undefined) {
+        targetX = obs.x;
+        targetY = obs.y;
+        selectedType = { type: "obstacle", id: obs.id };
+      }
+    }
+
+    if (targetX !== null && targetY !== null) {
+      if (targetFloorId) {
+        setActiveFloorId(targetFloorId);
+      }
+
+      const curZoom = zoomRef.current || 0.8;
+      const centeredPanX = 500 - targetX * curZoom;
+      const centeredPanY = 350 - targetY * curZoom;
+
+      setPanOffset({ x: centeredPanX, y: centeredPanY });
+
+      if (selectedType) {
+        setSelectedElement(selectedType);
+        setSelectedEntityIds(new Set([focusParamId]));
+      }
+
+      toast({
+        type: "info",
+        title: "Focused Target Entity",
+        description: `Centered CAD canvas viewport on object (${focusParamId}).`,
+      });
+    }
+  }, [focusParamId, storeData]);
 
 
   // Event Tool Form State Helpers
@@ -747,36 +883,8 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
     if (typeof window !== "undefined") {
       const meta = campusStore.getSavedDraftMetadata();
       const hasUnsaved = campusStore.hasUnsavedEdits();
-      if (meta || hasUnsaved) {
-        setDraftMeta(
-          meta || {
-            name: "Unsaved Previous Edits",
-            timestamp: Date.now(),
-            entityCount:
-              storeData.buildings.length +
-              storeData.nodes.length +
-              storeData.floors.length +
-              storeData.edges.length +
-              storeData.destinations.length +
-              storeData.doors.length +
-              storeData.liftGroups.length +
-              storeData.corridors.length,
-            pendingCount: pendingChanges.length,
-            breakdown: {
-              buildings: storeData.buildings.length,
-              floors: storeData.floors.length,
-              nodes: storeData.nodes.length,
-              edges: storeData.edges.length,
-              destinations: storeData.destinations.length,
-              events: storeData.events.length,
-              obstacles: storeData.obstacles.length,
-              doors: storeData.doors.length,
-              lifts: storeData.liftGroups.length,
-              corridors: storeData.corridors.length,
-              stairs: storeData.stairGroups.length,
-            },
-          }
-        );
+      if (meta && hasUnsaved) {
+        setDraftMeta(meta);
         setShowDraftPromptModal(true);
       }
     }
@@ -1178,10 +1286,8 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
   // Pan Canvas to specific coordinate
   const zoomToPos = (x: number, y: number, floorId?: string) => {
     if (floorId) setActiveFloorId(floorId);
-    setFocusedPos({ x, y });
     setZoom(1.4);
     setPanOffset({ x: 400 - x * 1.4, y: 300 - y * 1.4 });
-    setTimeout(() => setFocusedPos(null), 3000);
   };
 
   // Run Route Simulation
@@ -3304,18 +3410,7 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
                 </g>
               )}
 
-              {/* Focus Ripple Indicator */}
-              {focusedPos && (
-                <circle
-                  cx={focusedPos.x}
-                  cy={focusedPos.y}
-                  r="24"
-                  fill="none"
-                  stroke="#ef4444"
-                  strokeWidth="3"
-                  className="animate-ping"
-                />
-              )}
+
             </g>
           </svg>
 

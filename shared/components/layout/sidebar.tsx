@@ -17,6 +17,7 @@ import {
   Compass,
   ChevronLeft,
   Footprints,
+  Boxes,
   type LucideIcon,
 } from "lucide-react";
 import { useAdminAuth } from "@/features/admin/components/admin-guard";
@@ -34,6 +35,7 @@ export const adminNavGroups: { title: string; items: NavItem[] }[] = [
   {
     title: "Digital Twin",
     items: [
+      { href: "/admin/entity-management", label: "Entity Management", icon: Boxes, badge: "Primary" },
       { href: "/admin/editor", label: "CAD Canvas Editor", icon: Compass, badge: "CAD" },
       { href: "/admin/buildings", label: "Buildings", icon: Building2 },
       { href: "/admin/floors", label: "Floors", icon: Layers },

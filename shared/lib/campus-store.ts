@@ -1039,6 +1039,8 @@ class CampusStore {
     this.notify();
   }
 
+
+
   public deleteNode(id: string) {
     const idx = this.nodes.findIndex((n) => n.id === id);
     if (idx === -1) return;

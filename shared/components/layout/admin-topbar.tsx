@@ -23,6 +23,7 @@ import { PublishModal } from "@/shared/components/publish-modal";
 
 const labels: Record<string, string> = {
   admin: "Admin",
+  "entity-management": "Entity Management",
   editor: "CAD Canvas Editor",
   analytics: "Analytics",
   campuses: "Campuses",

@@ -13,6 +13,7 @@ import {
   Compass,
   PencilRuler,
   Footprints,
+  Boxes,
 } from "lucide-react";
 import { PageHeader } from "@/features/admin/components/page-header";
 import { Card, CardTitle, CardDescription } from "@/shared/components/ui/card";
@@ -21,7 +22,8 @@ import { Button } from "@/shared/components/ui/button";
 import { campusStore } from "@/shared/lib/campus-store";
 
 const quickActions = [
-  { href: "/admin/editor", label: "CAD Canvas Editor", description: "Interactive full-screen CAD editor for buildings, nodes, edges & hazards", badge: "Primary" },
+  { href: "/admin/entity-management", label: "Entity Management", description: "Dedicated panel for creating, editing & managing all campus objects with real-time CAD sync", badge: "Primary Hub" },
+  { href: "/admin/editor", label: "CAD Canvas Editor", description: "Interactive full-screen CAD editor for buildings, nodes, edges & hazards", badge: "CAD Engine" },
   { href: "/admin/buildings", label: "Manage Buildings", description: "Create and configure campus building shapes" },
   { href: "/admin/stairs", label: "Manage Stairs", description: "Configure multi-floor staircases & vertical routes" },
   { href: "/admin/nodes", label: "Manage Nodes", description: "View and edit campus graph nodes" },
