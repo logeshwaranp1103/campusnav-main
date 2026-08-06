@@ -958,7 +958,7 @@ function MapCanvas({
 
       {/* Floor Transition Badges for Stair & Lift Nodes on Route */}
       {route &&
-        routeNodes.map((n) => {
+        routeNodes.map((n, idx) => {
           if (n.type !== "STAIR" && n.type !== "LIFT") return null;
           const nodeIdx = route.nodes.findIndex((rn) => rn.id === n.id);
           if (nodeIdx === -1) return null;
@@ -973,7 +973,7 @@ function MapCanvas({
           const badgeWidth = badgeText.length * 6.5 + 20;
 
           return (
-            <g key={`stair-badge-${n.id}`} transform={`translate(${n.x}, ${n.y - 45})`}>
+            <g key={`stair-badge-${n.id}-${idx}`} transform={`translate(${n.x}, ${n.y - 45})`}>
               <rect
                 x={-badgeWidth / 2}
                 y="-12"
