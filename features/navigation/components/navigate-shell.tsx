@@ -381,6 +381,40 @@ export function NavigateShell() {
     setStops([]);
   }
 
+  // Continuously watch user GPS position when "Your Location" or live navigation is active
+  useEffect(() => {
+    if (typeof window === "undefined" || !navigator.geolocation) return;
+    if (fromSelected?.id !== YOUR_LOCATION_ID && !live) return;
+
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        const nearestNode = (publishedData.nodes || []).reduce(
+          (closest, n) => {
+            const nLat = n.lat ?? (12.971 + n.y / 10000);
+            const nLng = n.lng ?? (77.594 + n.x / 10000);
+            const dist = Math.hypot(nLat - latitude, nLng - longitude);
+            return dist < closest.dist ? { node: n, dist } : closest;
+          },
+          { node: publishedData.nodes[0], dist: Infinity }
+        ).node;
+
+        if (nearestNode) {
+          setLivePos((prev) => {
+            if (prev?.node.id === nearestNode.id) return prev;
+            return { node: nearestNode, progress: 0 };
+          });
+        }
+      },
+      (err) => {
+        console.warn("GPS Watch Warning:", err.message);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 }
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [fromSelected?.id, live, publishedData.nodes]);
+
   function startLive() {
     setLive(true);
     setMobileView("map");

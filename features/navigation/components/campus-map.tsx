@@ -45,25 +45,27 @@ export function CampusMap({ route, livePosition, progress, onNavigateToDest }: P
     return () => unsub();
   }, []);
 
-  // Auto-switch floor view when route transitions to a new floor
+  // Auto-switch floor view when live position, real GPS location, or route floor changes
   useEffect(() => {
-    if (route && route.nodes.length > 0) {
-      const activeStepFloor = route.nodes[0].floorId;
-      if (activeStepFloor) {
-        setView(activeStepFloor);
-      }
+    if (livePosition?.floorId) {
+      setView(livePosition.floorId);
+    } else if (gps.isGpsActive && gps.canvasPos?.floorId) {
+      setView(gps.canvasPos.floorId);
+    } else if (route && route.nodes.length > 0 && route.nodes[0].floorId) {
+      setView(route.nodes[0].floorId);
     }
-  }, [route]);
+  }, [livePosition?.floorId, gps.isGpsActive, gps.canvasPos?.floorId, route]);
+
+  const validFloorIds = useMemo(() => {
+    const ids = new Set(["f-out", ...(publishedData.floors || []).map((f) => f.id)]);
+    return ids;
+  }, [publishedData.floors]);
 
   const indoorFloors = useMemo(() => {
-    if (!route) return [];
-    const ids = new Set(
-      route.nodes.map((n) => n.floorId).filter((f) => f !== "f-out"),
-    );
-    return Array.from(ids);
-  }, [route]);
+    return (publishedData.floors || []).map((f) => f.id);
+  }, [publishedData.floors]);
 
-  const activeView = view === "f-out" || indoorFloors.includes(view) ? view : "f-out";
+  const activeView = validFloorIds.has(view) ? view : "f-out";
 
   const allBuildings = publishedData.buildings;
   const allFloors = publishedData.floors;
