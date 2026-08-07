@@ -24,9 +24,8 @@ export async function logAuditEvent(input: AuditEventInput) {
 
   if (prisma) {
     try {
-      await prisma.auditLog.create({
+      const dbPromise = prisma.auditLog.create({
         data: {
-          userId: input.userId,
           action: input.action,
           resource: input.resource,
           resourceId: input.resourceId,
@@ -36,8 +35,12 @@ export async function logAuditEvent(input: AuditEventInput) {
           userAgent: input.userAgent,
         },
       });
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("DB timeout")), 800)
+      );
+      await Promise.race([dbPromise, timeoutPromise]);
     } catch {
-      // Memory fallback if DB disconnected
+      // Memory fallback if DB disconnected or timed out
     }
   }
 
@@ -47,11 +50,15 @@ export async function logAuditEvent(input: AuditEventInput) {
 export async function getAuditLogs(limit = 50) {
   if (prisma) {
     try {
-      const logs = await prisma.auditLog.findMany({
+      const dbPromise = prisma.auditLog.findMany({
         take: limit,
         orderBy: { createdAt: "desc" },
       });
-      if (logs.length > 0) return logs;
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("DB timeout")), 800)
+      );
+      const logs = (await Promise.race([dbPromise, timeoutPromise])) as any[];
+      if (logs && logs.length > 0) return logs;
     } catch {
       // Memory fallback
     }

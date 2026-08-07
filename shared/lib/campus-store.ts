@@ -273,6 +273,7 @@ class CampusStore {
         this.checkpoints = JSON.parse(storedCheckpoints) || [];
       }
       this.ensureDefaultGroundFloors();
+      this.syncWithServer();
     } catch (e) {
       console.warn("Failed to load campus store from localStorage", e);
     }
@@ -2102,8 +2103,64 @@ class CampusStore {
     this.publishedVersion = `v${major}.${minor > 0 ? minor : 1}`;
     this.logAction("PUBLISH", `Map ${this.publishedVersion} (${this.buildings.length} Buildings)`);
     this.pendingChanges = [];
+    this.saveToLocalStorage();
+
+    // Push published snapshot to server API so all other devices receive data immediately
+    if (typeof window !== "undefined") {
+      fetch("/api/published-graph", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ snapshot: this.publishedGraph }),
+      }).catch((err) => console.warn("Failed to sync published graph with server:", err));
+    }
+
     this.notify();
     return { version: this.publishedVersion, count: this.buildings.length };
+  }
+
+  public async syncWithServer() {
+    if (typeof window === "undefined") return;
+    try {
+      const res = await fetch("/api/published-graph", { cache: "no-store" });
+      if (!res.ok) return;
+      const json = await res.json();
+      const graph = json?.graph;
+      if (graph && Array.isArray(graph.buildings) && (graph.buildings.length > 0 || graph.nodes?.length > 0)) {
+        this.publishedGraph = {
+          buildings: graph.buildings || [],
+          floors: graph.floors || [],
+          nodes: graph.nodes || [],
+          edges: graph.edges || [],
+          destinations: graph.destinations || [],
+          events: graph.events || [],
+          obstacles: graph.obstacles || [],
+          stairGroups: graph.stairGroups || [],
+          liftGroups: graph.liftGroups || [],
+          doors: graph.doors || [],
+          corridors: graph.corridors || [],
+        };
+
+        // If local working data on this device is empty, populate from server published graph!
+        if (this.buildings.length === 0 && this.nodes.length === 0) {
+          this.buildings = JSON.parse(JSON.stringify(this.publishedGraph.buildings));
+          this.floors = JSON.parse(JSON.stringify(this.publishedGraph.floors));
+          this.nodes = JSON.parse(JSON.stringify(this.publishedGraph.nodes));
+          this.edges = JSON.parse(JSON.stringify(this.publishedGraph.edges));
+          this.destinations = JSON.parse(JSON.stringify(this.publishedGraph.destinations));
+          this.events = JSON.parse(JSON.stringify(this.publishedGraph.events));
+          this.obstacles = JSON.parse(JSON.stringify(this.publishedGraph.obstacles));
+          this.stairGroups = JSON.parse(JSON.stringify(this.publishedGraph.stairGroups || []));
+          this.liftGroups = JSON.parse(JSON.stringify(this.publishedGraph.liftGroups || []));
+          this.doors = JSON.parse(JSON.stringify(this.publishedGraph.doors || []));
+          this.corridors = JSON.parse(JSON.stringify(this.publishedGraph.corridors || []));
+        }
+
+        this.saveToLocalStorage();
+        this.notify();
+      }
+    } catch (e) {
+      console.warn("Failed to sync published graph with server:", e);
+    }
   }
 
   // ── Named Checkpoints ────────────────────────────────────
