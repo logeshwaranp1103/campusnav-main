@@ -148,21 +148,46 @@ export function EntityManager() {
     }
   };
 
-  // Handle Fullscreen Toggle (Instant 0-lag Workspace Mode)
+  // Handle Fullscreen Toggle using Browser Native Fullscreen API to hide Chrome browser tabs & top address bar
   const toggleFullscreen = () => {
-    setIsFullscreen((prev) => !prev);
+    const target = containerRef.current || document.documentElement;
+    if (!document.fullscreenElement && !isFullscreen) {
+      if (target.requestFullscreen) {
+        target.requestFullscreen().catch(() => {});
+      } else if ((target as any).webkitRequestFullscreen) {
+        (target as any).webkitRequestFullscreen();
+      } else if ((target as any).msRequestFullscreen) {
+        (target as any).msRequestFullscreen();
+      }
+      setIsFullscreen(true);
+    } else {
+      if (document.exitFullscreen && document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      } else if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen();
+      } else if ((document as any).msExitFullscreen) {
+        (document as any).msExitFullscreen();
+      }
+      setIsFullscreen(false);
+    }
   };
 
-  // Exit fullscreen workspace mode on ESC key press
+  // Sync fullscreen state with native browser fullscreenchange events
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isFullscreen) {
-        setIsFullscreen(false);
-      }
+    const handleFSChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isFullscreen]);
+    document.addEventListener("fullscreenchange", handleFSChange);
+    document.addEventListener("webkitfullscreenchange", handleFSChange);
+    document.addEventListener("mozfullscreenchange", handleFSChange);
+    document.addEventListener("MSFullscreenChange", handleFSChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFSChange);
+      document.removeEventListener("webkitfullscreenchange", handleFSChange);
+      document.removeEventListener("mozfullscreenchange", handleFSChange);
+      document.removeEventListener("MSFullscreenChange", handleFSChange);
+    };
+  }, []);
 
   // ---------------------------------------------------------------------------
   // DYNAMIC FORM STATES
