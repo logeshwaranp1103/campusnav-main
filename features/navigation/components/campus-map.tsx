@@ -30,9 +30,8 @@ export function CampusMap({ route, livePosition, progress, onNavigateToDest }: P
   const [zoomLevel, setZoomLevel] = useState(1);
   const [resetTrigger, setResetTrigger] = useState(0);
 
-  // User Layer Toggles for Obstacles & Events
+  // User Layer Toggle for Obstacles
   const [showObstacles, setShowObstacles] = useState(true);
-  const [showEvents, setShowEvents] = useState(true);
 
   const gps = useVisitorGps();
 
@@ -81,26 +80,25 @@ export function CampusMap({ route, livePosition, progress, onNavigateToDest }: P
         gps={gps}
         autoRotate={autoRotate}
         showObstacles={showObstacles}
-        showEvents={showEvents}
         externalZoom={zoomLevel}
         resetTrigger={resetTrigger}
         onSelectDestination={(dest) => setSelectedDestForDetails(dest)}
       />
 
       {/* Floating View, Zoom & Layer Controls */}
-      <div className="absolute right-3 top-3 flex flex-col items-end gap-1.5 z-20 pointer-events-auto">
+      <div className="absolute right-3 top-3 flex flex-col items-end gap-2.5 z-20 pointer-events-auto">
         {/* Zoom & Reset Controls */}
         <div className="flex flex-col gap-1 rounded-xl border bg-[rgb(var(--card))]/90 p-1 shadow-lg backdrop-blur-md w-fit">
           <button
             onClick={() => setZoomLevel((z) => Math.min(4, z * 1.25))}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[rgb(var(--fg))] hover:bg-[rgb(var(--muted))] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--primary))]"
+            className="flex h-9 w-9 items-center justify-center rounded-lg text-[rgb(var(--fg))] hover:bg-[rgb(var(--muted))] active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--primary))]"
             title="Zoom In"
           >
             <ZoomIn className="h-4 w-4" />
           </button>
           <button
             onClick={() => setZoomLevel((z) => Math.max(0.5, z / 1.25))}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[rgb(var(--fg))] hover:bg-[rgb(var(--muted))] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--primary))]"
+            className="flex h-9 w-9 items-center justify-center rounded-lg text-[rgb(var(--fg))] hover:bg-[rgb(var(--muted))] active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--primary))]"
             title="Zoom Out"
           >
             <ZoomOut className="h-4 w-4" />
@@ -110,7 +108,7 @@ export function CampusMap({ route, livePosition, progress, onNavigateToDest }: P
               setZoomLevel(1);
               setResetTrigger((t) => t + 1);
             }}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[rgb(var(--fg))] hover:bg-[rgb(var(--muted))] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--primary))]"
+            className="flex h-9 w-9 items-center justify-center rounded-lg text-[rgb(var(--fg))] hover:bg-[rgb(var(--muted))] active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--primary))]"
             title="Reset Map Pan & Zoom"
           >
             <Maximize2 className="h-3.5 w-3.5" />
@@ -140,57 +138,49 @@ export function CampusMap({ route, livePosition, progress, onNavigateToDest }: P
           })}
         </div>
 
-        {/* User Layer Toggles: Obstacles & Events */}
-        <div className="flex flex-col gap-1 rounded-xl border bg-[rgb(var(--card))]/90 p-1.5 shadow-lg backdrop-blur-md w-fit">
+        {/* User Layer Toggle: Obstacles (Mobile: Icon only, Desktop/Tablet: Icon + Text) */}
+        <div className="flex flex-col gap-1 rounded-xl border bg-[rgb(var(--card))]/90 p-1 shadow-lg backdrop-blur-md w-fit">
           <button
             onClick={() => setShowObstacles(!showObstacles)}
-            className={`flex h-7 items-center gap-1.5 px-2 rounded-lg text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
+            className={`flex h-9 min-w-9 items-center justify-center gap-1.5 px-2 rounded-lg text-[11px] font-semibold active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 cursor-pointer ${
               showObstacles
-                ? "bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30"
+                ? "bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30 shadow-xs"
                 : "text-[rgb(var(--muted-fg))] hover:bg-[rgb(var(--muted))]"
             }`}
             title="Toggle Campus Hazards & Obstacles"
+            aria-label="Toggle Obstacles"
           >
-            <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
-            <span>Obstacles</span>
-          </button>
-
-          <button
-            onClick={() => setShowEvents(!showEvents)}
-            className={`flex h-7 items-center gap-1.5 px-2 rounded-lg text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${
-              showEvents
-                ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
-                : "text-[rgb(var(--muted-fg))] hover:bg-[rgb(var(--muted))]"
-            }`}
-            title="Toggle Campus Events"
-          >
-            <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-            <span>Events</span>
+            <AlertTriangle className="h-4 w-4 text-red-500 shrink-0" />
+            <span className="hidden md:inline">Obstacles</span>
           </button>
         </div>
 
-        {/* Recenter & Compass Rotation Buttons */}
-        <div className="flex flex-col gap-1 rounded-xl border bg-[rgb(var(--card))]/90 p-1.5 shadow-lg backdrop-blur-md w-fit">
+        {/* Recenter & Compass Directions Buttons (Touch-friendly 44x44 px targets) */}
+        <div className="flex flex-col gap-2 rounded-2xl border bg-[rgb(var(--card))]/95 p-1.5 shadow-xl backdrop-blur-md w-fit">
           <button
             onClick={() => {
               setZoomLevel(1);
               setResetTrigger((t) => t + 1);
               gps.recenter({ x: 400, y: 300, floorId: activeView });
             }}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-emerald-500 hover:bg-[rgb(var(--muted))] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-            title="Recenter on My Location"
+            className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 cursor-pointer shadow-xs"
+            title="Recenter & Focus My Location"
+            aria-label="Recenter Location"
           >
-            <Locate className="h-4 w-4" />
+            <Locate className="h-5 w-5 stroke-[2.25]" />
           </button>
 
           <button
             onClick={() => setAutoRotate(!autoRotate)}
-            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
-              autoRotate ? "bg-indigo-600 text-white shadow-sm" : "text-[rgb(var(--muted-fg))] hover:bg-[rgb(var(--muted))]"
+            className={`flex h-11 w-11 items-center justify-center rounded-xl active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 cursor-pointer shadow-xs ${
+              autoRotate
+                ? "bg-indigo-600 text-white shadow-md ring-2 ring-indigo-500/40"
+                : "bg-[rgb(var(--primary))/0.1] text-[rgb(var(--primary))] hover:bg-[rgb(var(--primary))/0.2]"
             }`}
-            title="Toggle Heading Rotation"
+            title="Directions & Auto Heading Rotation"
+            aria-label="Toggle Heading Directions"
           >
-            <Compass className="h-4 w-4" />
+            <Compass className="h-5 w-5 stroke-[2.25]" />
           </button>
         </div>
       </div>
@@ -662,54 +652,9 @@ function MapCanvas({
                 </text>
               </g>
 
-              {activeEvent && (
-                <g transform={`translate(${bx + bw - 28}, ${by + 6})`}>
-                  <rect width="20" height="20" rx="10" fill={activeEvent.color || "#f59e0b"} />
-                  <text x="10" y="14" textAnchor="middle" fill="#ffffff" fontSize="10" fontWeight="bold">
-                    ✨
-                  </text>
-                </g>
-              )}
             </g>
           );
         })}
-
-        {/* Standalone Events Badges */}
-        {showEvents &&
-          allEvents.filter((ev) => isEventActive(ev, nowMs)).map((ev) => {
-            const bld = buildings.find((b) => b.id === ev.buildingId);
-            const evX = ev.x ?? (bld ? (bld.x ?? 0) + (bld.width ?? 180) / 2 : 400);
-            const evY = ev.y ?? (bld ? (bld.y ?? 0) + (bld.height ?? 120) / 2 : 300);
-            const color = ev.color || "#f59e0b";
-            const pillWidth = Math.max(85, ev.title.length * 6 + 32);
-
-            return (
-              <g key={`map-ev-${ev.id}`} transform={`translate(${evX}, ${evY})`}>
-                <rect
-                  x={-pillWidth / 2}
-                  y="-12"
-                  width={pillWidth}
-                  height="22"
-                  rx="6"
-                  fill={color}
-                  fillOpacity="0.95"
-                  stroke="#ffffff"
-                  strokeWidth="1.5"
-                  className="shadow-md"
-                />
-                <text
-                  x="0"
-                  y="2"
-                  textAnchor="middle"
-                  fill="#ffffff"
-                  fontSize="10"
-                  fontWeight="bold"
-                >
-                  ✨ {ev.title}
-                </text>
-              </g>
-            );
-          })}
       </g>
 
       {/* Published Obstacles / Hazards Layer */}

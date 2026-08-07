@@ -785,27 +785,7 @@ export function NavigateShell() {
 
       {/* Map view area */}
       <div className="relative flex-1 bg-[rgb(var(--card))]/30">
-        {/* Floating Mobile Route Summary Header on Map View */}
-        {mobileView === "map" && (
-          <div className="absolute top-3 left-3 right-16 z-20 md:hidden pointer-events-auto">
-            <div
-              onClick={() => setMobileView("panel")}
-              className="flex items-center justify-between gap-2 rounded-xl border bg-[rgb(var(--card))]/95 px-3 py-2 shadow-lg backdrop-blur-md cursor-pointer hover:bg-[rgb(var(--card))] transition-colors"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-[rgb(var(--muted-fg))]">
-                  {toSelected ? "Active Route" : "Navigate Campus"}
-                </div>
-                <div className="truncate text-xs font-bold text-[rgb(var(--fg))]">
-                  {toSelected ? `${fromSelected?.name || "Start"} → ${toSelected.name}` : "Tap to plan route..."}
-                </div>
-              </div>
-              <Badge variant="primary" className="text-[10px] shrink-0">
-                Edit
-              </Badge>
-            </div>
-          </div>
-        )}
+
 
         <CampusMap
           route={route}

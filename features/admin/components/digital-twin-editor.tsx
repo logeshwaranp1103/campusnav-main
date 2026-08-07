@@ -156,6 +156,7 @@ function DimensionInput({
 export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: ToolMode }) {
   const [storeData, setStoreData] = useState(campusStore.getWorkingData());
   const [pendingChanges, setPendingChanges] = useState<PendingChange[]>(campusStore.getPendingChanges());
+  const [showMobilePanels, setShowMobilePanels] = useState(false);
 
   // Subscribe to live campusStore changes for instant CAD canvas update without page refresh
   useEffect(() => {
@@ -2148,6 +2149,17 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
           <Button
             size="sm"
             variant="outline"
+            onClick={() => setShowMobilePanels((prev) => !prev)}
+            className="h-7 px-2 text-xs font-semibold md:hidden border-[rgb(var(--border))] text-[rgb(var(--fg))]"
+            title={showMobilePanels ? "Hide Side Panels" : "Show Side Panels"}
+          >
+            <Layers className="h-3.5 w-3.5 mr-1" />
+            {showMobilePanels ? "Hide Panels" : "Show Panels"}
+          </Button>
+
+          <Button
+            size="sm"
+            variant="outline"
             onClick={toggleFullscreen}
             className="h-7 w-7 p-0 flex items-center justify-center text-xs font-medium shrink-0"
             title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
@@ -2168,7 +2180,7 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
       {/* Main Layout */}
       <div className="relative flex flex-1 overflow-hidden">
         {/* Requirement #3: Functional Quick Actions & Layer Hierarchy */}
-        <div className="w-56 border-r bg-[rgb(var(--card))]/50 p-3 overflow-y-auto space-y-3 text-xs shrink-0 backdrop-blur-xs">
+        <div className={cn("w-56 border-r bg-[rgb(var(--card))]/50 p-3 overflow-y-auto space-y-3 text-xs shrink-0 backdrop-blur-xs transition-all duration-300", !showMobilePanels ? "hidden md:block" : "block")}>
           {/* Search Bar Input above Health */}
           <div className="relative flex items-center w-full">
             <Search className="absolute left-2.5 h-3.5 w-3.5 text-[rgb(var(--muted-fg))]" />

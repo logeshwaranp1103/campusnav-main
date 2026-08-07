@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef } from "react";
 import Link from "next/link";
+import { cn } from "@/shared/lib/utils";
 import {
   Building2,
   Layers,
@@ -80,6 +81,7 @@ export function EntityManager() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<EntityCategory | "ALL">("ALL");
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showMobilePanel, setShowMobilePanel] = useState(false);
 
   // Directory Row Multi-Selection State for Bulk Actions
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set());
@@ -1008,6 +1010,17 @@ export function EntityManager() {
             <Button
               size="sm"
               variant="outline"
+              onClick={() => setShowMobilePanel((prev) => !prev)}
+              className="gap-1.5 shadow-sm lg:hidden border-[rgb(var(--border))]"
+              title={showMobilePanel ? "Hide Object Creator Panel" : "Show Object Creator Panel"}
+            >
+              <Layers className="h-4 w-4 text-[rgb(var(--primary))]" />
+              <span className="font-semibold">{showMobilePanel ? "Hide Panel" : "Show Panel"}</span>
+            </Button>
+
+            <Button
+              size="sm"
+              variant="outline"
               onClick={toggleFullscreen}
               className="gap-1.5 shadow-sm"
               title={isFullscreen ? "Exit Full Screen" : "Full Screen View"}
@@ -1028,8 +1041,8 @@ export function EntityManager() {
       {/* 2-STEP WORKFLOW CONTAINER */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* STEP 1: ENTITY TYPE SELECTOR (4 COLS) */}
-        <div className="lg:col-span-4 space-y-3">
+        {/* STEP 1: ENTITY TYPE SELECTOR (4 COLS - Hidden by default on mobile unless toggled) */}
+        <div className={cn("lg:col-span-4 space-y-3 transition-all duration-300", !showMobilePanel ? "hidden lg:block" : "block")}>
           <div className="flex items-center justify-between px-1">
             <div className="flex items-center gap-2">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[rgb(var(--primary))] text-white text-xs font-extrabold shadow-sm">1</span>
