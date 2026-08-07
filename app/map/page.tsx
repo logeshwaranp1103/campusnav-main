@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Navigation2, ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
 import { useToast } from "@/shared/components/ui/toast";
@@ -13,6 +13,7 @@ import { getObstructedEdgeIds } from "@/lib/routing/graph";
 import { generateDirections, type DirectionStep } from "@/lib/routing/directions";
 import { VisitorSearchSheet } from "./components/search-sheet";
 import { NavigationView } from "./components/navigation-view";
+import { getValidNavigationDestinations } from "@/shared/lib/destination-utils";
 
 // ─── Pan/Zoom types ────────────────────────────────────────────────────────────
 type Transform = { x: number; y: number; scale: number };
@@ -50,6 +51,10 @@ export default function VisitorPage() {
 
   // UI Panel Modes
   const [activePanel, setActivePanel] = useState<"SEARCH" | "NAVIGATE" | "IDLE">("SEARCH");
+
+  const validNavDestinations = useMemo(() => {
+    return getValidNavigationDestinations(publishedData);
+  }, [publishedData]);
 
   // ── Pan / Zoom State ─────────────────────────────────────────────────────────
   const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, scale: 1 });
@@ -202,6 +207,168 @@ export default function VisitorPage() {
     container.addEventListener("wheel", handleWheel, { passive: false });
     return () => container.removeEventListener("wheel", handleWheel);
   }, [handleWheel]);
+
+  const transformRef = useRef(transform);
+  transformRef.current = transform;
+
+  const touchStateRef = useRef<{
+    mode: "NONE" | "PAN" | "PINCH";
+    initialDist: number;
+    initialScale: number;
+    lastPos: { x: number; y: number };
+    lastCenter: { x: number; y: number };
+    lastTapTime: number;
+  }>({
+    mode: "NONE",
+    initialDist: 0,
+    initialScale: 1,
+    lastPos: { x: 0, y: 0 },
+    lastCenter: { x: 0, y: 0 },
+    lastTapTime: 0,
+  });
+
+  // Native Non-Passive Touch Listeners for mobile 2-finger pinch zoom & 1-finger pan
+  useEffect(() => {
+    const container = svgContainerRef.current;
+    if (!container) return;
+
+    const getDistance = (t1: Touch, t2: Touch) =>
+      Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+
+    const getCenter = (t1: Touch, t2: Touch) => ({
+      x: (t1.clientX + t2.clientX) / 2,
+      y: (t1.clientY + t2.clientY) / 2,
+    });
+
+    const handleTouchStart = (e: TouchEvent) => {
+      const now = Date.now();
+      const tState = touchStateRef.current;
+
+      if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        // Double-tap zoom detection (<300ms)
+        if (now - tState.lastTapTime < 300) {
+          e.preventDefault();
+          const rect = container.getBoundingClientRect();
+          const mouseX = touch.clientX - rect.left;
+          const mouseY = touch.clientY - rect.top;
+          setTransform((prev) => {
+            const newScale = Math.min(MAX_SCALE, prev.scale * 1.5);
+            const scaleDiff = newScale / prev.scale;
+            return {
+              x: mouseX - scaleDiff * (mouseX - prev.x),
+              y: mouseY - scaleDiff * (mouseY - prev.y),
+              scale: newScale,
+            };
+          });
+          tState.lastTapTime = 0;
+          tState.mode = "NONE";
+          return;
+        }
+        tState.lastTapTime = now;
+        tState.mode = "PAN";
+        tState.lastPos = { x: touch.clientX, y: touch.clientY };
+      } else if (e.touches.length >= 2) {
+        e.preventDefault();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const dist = getDistance(t1, t2);
+        const center = getCenter(t1, t2);
+
+        tState.mode = "PINCH";
+        tState.initialDist = dist || 1;
+        tState.initialScale = transformRef.current.scale;
+        tState.lastCenter = center;
+        tState.lastPos = center;
+      }
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      const tState = touchStateRef.current;
+      if (tState.mode === "NONE") return;
+
+      if (e.touches.length >= 2) {
+        e.preventDefault();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const currentDist = getDistance(t1, t2);
+        const currentCenter = getCenter(t1, t2);
+
+        if (tState.mode !== "PINCH" || !tState.initialDist) {
+          tState.mode = "PINCH";
+          tState.initialDist = currentDist || 1;
+          tState.initialScale = transformRef.current.scale;
+          tState.lastCenter = currentCenter;
+          tState.lastPos = currentCenter;
+          return;
+        }
+
+        const ratio = currentDist / tState.initialDist;
+        const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, tState.initialScale * ratio));
+        const dx = currentCenter.x - tState.lastCenter.x;
+        const dy = currentCenter.y - tState.lastCenter.y;
+
+        setTransform((prev) => {
+          const rect = container.getBoundingClientRect();
+          const mouseX = currentCenter.x - rect.left;
+          const mouseY = currentCenter.y - rect.top;
+          const scaleDiff = newScale / (prev.scale || 1);
+          const newX = mouseX - scaleDiff * (mouseX - prev.x) + dx;
+          const newY = mouseY - scaleDiff * (mouseY - prev.y) + dy;
+          return { x: newX, y: newY, scale: newScale };
+        });
+
+        tState.lastCenter = currentCenter;
+      } else if (e.touches.length === 1) {
+        e.preventDefault();
+        const touch = e.touches[0];
+
+        if (tState.mode === "PINCH") {
+          tState.mode = "PAN";
+          tState.lastPos = { x: touch.clientX, y: touch.clientY };
+          return;
+        }
+
+        const dx = touch.clientX - tState.lastPos.x;
+        const dy = touch.clientY - tState.lastPos.y;
+
+        setTransform((prev) => ({
+          ...prev,
+          x: prev.x + dx,
+          y: prev.y + dy,
+        }));
+
+        tState.lastPos = { x: touch.clientX, y: touch.clientY };
+      }
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      const tState = touchStateRef.current;
+      if (e.touches.length === 0) {
+        tState.mode = "NONE";
+      } else if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        tState.mode = "PAN";
+        tState.lastPos = { x: touch.clientX, y: touch.clientY };
+      }
+    };
+
+    const handleTouchCancel = () => {
+      touchStateRef.current.mode = "NONE";
+    };
+
+    container.addEventListener("touchstart", handleTouchStart, { passive: false });
+    container.addEventListener("touchmove", handleTouchMove, { passive: false });
+    container.addEventListener("touchend", handleTouchEnd, { passive: false });
+    container.addEventListener("touchcancel", handleTouchCancel, { passive: false });
+
+    return () => {
+      container.removeEventListener("touchstart", handleTouchStart);
+      container.removeEventListener("touchmove", handleTouchMove);
+      container.removeEventListener("touchend", handleTouchEnd);
+      container.removeEventListener("touchcancel", handleTouchCancel);
+    };
+  }, []);
 
   // ── Pointer pan ────────────────────────────────────────────────────────────
   const onPointerDown = useCallback((e: React.PointerEvent) => {
@@ -403,7 +570,7 @@ export default function VisitorPage() {
       {/* ── SVG Map Canvas (pan + zoom) ────────────────────────────────── */}
       <div
         ref={svgContainerRef}
-        className="relative flex-1 bg-[rgb(var(--card))]/30 overflow-hidden"
+        className="relative flex-1 bg-[rgb(var(--card))]/30 overflow-hidden touch-none select-none"
         style={{ cursor: isPanning.current ? "grabbing" : "grab" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -622,7 +789,7 @@ export default function VisitorPage() {
           {activePanel === "SEARCH" && (
             <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }}>
               <VisitorSearchSheet
-                destinations={publishedData.destinations}
+                destinations={validNavDestinations}
                 onSelectDestination={handleCalculateRoute}
               />
             </motion.div>

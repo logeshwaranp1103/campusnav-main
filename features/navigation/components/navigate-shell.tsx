@@ -27,6 +27,8 @@ import { campusStore } from "@/shared/lib/campus-store";
 import { CampusMap } from "./campus-map";
 import { LiveRoutePanel } from "./live-route-panel";
 import { TurnByTurnBar } from "./turn-by-turn-bar";
+import { getValidNavigationDestinations } from "@/shared/lib/destination-utils";
+import { findNearestNodeByGps } from "@/lib/geo/haversine";
 
 type StopEntry = {
   dest: Destination | null;
@@ -97,56 +99,9 @@ export function NavigateShell() {
     return () => unsub();
   }, []);
 
-  // Combine explicit destinations + named nodes (e.g. classrooms, labs, entrances, gates) into a unified destinations list (excluding raw building container names)
+  // Filter start/end destinations: no staircase, no lift group, no unnamed nodes. Show all named nodes.
   const allDestinations: Destination[] = useMemo(() => {
-    const namedNodeItems: Destination[] = (publishedData.nodes || [])
-      .filter((n) => n.name && n.name.trim().length > 0)
-      .map((n) => {
-        const typeLabel =
-          n.type === "GATE"
-            ? "Gate / Entrance"
-            : n.type === "BUILDING_ENTRANCE" || n.type === "ROOM_ENTRANCE"
-            ? "Entrance"
-            : n.type === "STAIR" || n.type === "LIFT"
-            ? "Floor Transition"
-            : n.type === "RECEPTION"
-            ? "Reception"
-            : n.type === "ROOM" || n.type === "LABORATORY" || n.type === "OFFICE"
-            ? "Classroom / Room"
-            : n.type === "OUTDOOR" || n.type === "OUTDOOR_PATH" || n.type === "ROAD_JUNCTION"
-            ? "Campus Landmark"
-            : "Map Location";
-
-        return {
-          id: n.id,
-          name: n.name!,
-          category: typeLabel,
-          floorId: n.floorId,
-          nodeId: n.id,
-          x: n.x,
-          y: n.y,
-          aliases: [
-            n.name!,
-            n.type,
-            ...(n.name!.toLowerCase().includes("gate") ? ["gate", "entrance", "main gate", "a gate"] : []),
-            ...(n.name!.toLowerCase().includes("entrance") ? ["entrance", "entry", "door"] : []),
-          ],
-        };
-      });
-
-    const map = new Map<string, Destination>();
-    // Exclude raw generic building items from navigation search list
-    publishedData.destinations
-      .filter((d) => d.category !== "Building")
-      .forEach((d) => map.set(d.id, d));
-
-    namedNodeItems
-      .filter((n) => n.category !== "Building")
-      .forEach((n) => {
-        if (!map.has(n.id)) map.set(n.id, n);
-      });
-
-    return Array.from(map.values());
+    return getValidNavigationDestinations(publishedData);
   }, [publishedData]);
 
   // Handle URL query parameter ?to=...
@@ -285,16 +240,8 @@ export function NavigateShell() {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
-        // Find nearest node to live coordinates
-        const nearestNode = (publishedData.nodes || []).reduce(
-          (closest, n) => {
-            const nLat = n.lat ?? (12.971 + n.y / 10000);
-            const nLng = n.lng ?? (77.594 + n.x / 10000);
-            const dist = Math.hypot(nLat - latitude, nLng - longitude);
-            return dist < closest.dist ? { node: n, dist } : closest;
-          },
-          { node: publishedData.nodes[0], dist: Infinity }
-        ).node;
+        // Find nearest node to live coordinates using geographic distance
+        const { node: nearestNode } = findNearestNodeByGps(latitude, longitude, publishedData.nodes || [], "f-out");
 
         const liveNodeId = nearestNode ? nearestNode.id : (publishedData.nodes[0]?.id ?? "n1");
         const liveDest: Destination = {
@@ -389,15 +336,7 @@ export function NavigateShell() {
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
-        const nearestNode = (publishedData.nodes || []).reduce(
-          (closest, n) => {
-            const nLat = n.lat ?? (12.971 + n.y / 10000);
-            const nLng = n.lng ?? (77.594 + n.x / 10000);
-            const dist = Math.hypot(nLat - latitude, nLng - longitude);
-            return dist < closest.dist ? { node: n, dist } : closest;
-          },
-          { node: publishedData.nodes[0], dist: Infinity }
-        ).node;
+        const { node: nearestNode } = findNearestNodeByGps(latitude, longitude, publishedData.nodes || [], "f-out");
 
         if (nearestNode) {
           setLivePos((prev) => {

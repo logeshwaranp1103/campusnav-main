@@ -1,5 +1,6 @@
 import type { Node, Edge, Obstacle, Floor } from "../../shared/data/campus";
 import { calculateHaversineDistance } from "../geo/haversine";
+import { canvasToGps } from "../geo/boundary";
 
 export type AdjacencyEdge = {
   edgeId: string;
@@ -251,24 +252,21 @@ export function buildAdjacencyGraph(
       }
     }
 
-    // Compute distance: use explicit e.distance if provided (>0), otherwise check vertical transition or canvas distance
-    let computedDist = typeof e.distance === "number" && e.distance > 0 ? e.distance : 0;
+    const isVerticalTransition = e.type === "STAIRS" || e.type === "LIFT" || (fn && tn && fn.floorId !== tn.floorId);
 
-    if (!computedDist && fn && tn) {
-      const isVerticalTransition = e.type === "STAIRS" || e.type === "LIFT" || fn.floorId !== tn.floorId;
-      if (isVerticalTransition) {
-        // Vertical transitions across floors have fixed floor height (15m), NEVER 2D canvas pixel distance
-        computedDist = 15;
-      } else if (fn.lat && fn.lng && tn.lat && tn.lng) {
-        computedDist = calculateHaversineDistance(fn.lat, fn.lng, tn.lat, tn.lng);
-      } else {
-        const dx = tn.x - fn.x;
-        const dy = tn.y - fn.y;
-        computedDist = Math.hypot(dx, dy) / 4;
-      }
+    let computedDist = 0;
+    if (typeof e.distance === "number" && e.distance > 0) {
+      computedDist = e.distance;
+    } else if (isVerticalTransition) {
+      // Vertical transitions across floors default to 15m if no explicit distance provided
+      computedDist = 15;
+    } else if (fn && tn) {
+      const fnGps = fn.lat && fn.lng ? { lat: fn.lat, lng: fn.lng } : canvasToGps(fn.x, fn.y);
+      const tnGps = tn.lat && tn.lng ? { lat: tn.lat, lng: tn.lng } : canvasToGps(tn.x, tn.y);
+      computedDist = calculateHaversineDistance(fnGps.lat, fnGps.lng, tnGps.lat, tnGps.lng);
     }
 
-    const dist = Math.max(1, Math.round(computedDist || e.distance || 1));
+    const dist = Math.max(1, Math.round(computedDist || 1));
     const weight = Math.max(1, dist * (extEdge.speedModifier ?? 1.0) + modePenalty);
 
     // ALWAYS add both forward AND backward — every campus edge is walkable in both directions

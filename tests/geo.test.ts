@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { solveAffineMatrix, gpsToCanvas, canvasToGps, type CalibrationPoint } from "../lib/geo/affine";
-import { calculateHaversineDistance, findNearestNodeByGps } from "../lib/geo/haversine";
+import { calculateGeographicDistance, findNearestNodeByGps } from "../lib/geo/haversine";
 
 const testPoints: CalibrationPoint[] = [
   { canvasX: 0, canvasY: 0, lat: 12.9710, lng: 77.5940 },
@@ -9,7 +9,7 @@ const testPoints: CalibrationPoint[] = [
   { canvasX: 1000, canvasY: 1000, lat: 12.9720, lng: 77.5950 },
 ];
 
-describe("Geo-Calibration Affine Solver", () => {
+describe("Geo-Calibration & Distance Calculations", () => {
   it("computes exact forward transform matrix from calibration points", () => {
     const matrix = solveAffineMatrix(testPoints);
     expect(matrix).not.toBeNull();
@@ -38,11 +38,13 @@ describe("Geo-Calibration Affine Solver", () => {
     expect(Math.abs(gps.lng - 77.5945)).toBeLessThan(0.001);
   });
 
-  it("calculates accurate real-world Haversine distances in meters", () => {
-    // Distance between 12.9716, 77.5946 and 12.9726, 77.5946 (~111 meters north)
-    const dist = calculateHaversineDistance(12.9716, 77.5946, 12.9726, 77.5946);
-    expect(dist).toBeGreaterThan(100);
-    expect(dist).toBeLessThan(120);
+  it("calculates accurate real-world distances in meters using equirectangular formula", () => {
+    // Section 10 Sample Validation Test:
+    // Point A: Lat 11.031000, Lng 77.120000
+    // Point B: Lat 11.032000, Lng 77.121000
+    // Expected distance: ~156 meters
+    const sampleDist = calculateGeographicDistance(11.031000, 77.120000, 11.032000, 77.121000);
+    expect(sampleDist).toBe(156);
   });
 
   it("snaps visitor live GPS position to the nearest navigation node", () => {

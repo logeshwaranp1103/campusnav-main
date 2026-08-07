@@ -43,6 +43,7 @@ import {
 import { Button } from "@/shared/components/ui/button";
 import { Input } from "@/shared/components/ui/input";
 import { canvasToGps, gpsToCanvas, isPointInCampusBoundary } from "@/lib/geo/boundary";
+import { calculateGeographicDistance } from "@/lib/geo/haversine";
 import { Badge } from "@/shared/components/ui/badge";
 import { useToast } from "@/shared/components/ui/toast";
 import { cn } from "@/shared/lib/utils";
@@ -1806,7 +1807,9 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
 
       if (roadLastNodeId && roadLastNodeId !== newNodeId) {
         const prevNode = storeData.nodes.find((n) => n.id === roadLastNodeId);
-        const dist = prevNode ? Math.round(Math.hypot(prevNode.x - x, prevNode.y - y) / 4) : 10;
+        const pGps = prevNode ? (prevNode.lat && prevNode.lng ? { lat: prevNode.lat, lng: prevNode.lng } : canvasToGps(prevNode.x, prevNode.y)) : canvasToGps(x, y);
+        const curGps = canvasToGps(x, y);
+        const dist = prevNode ? calculateGeographicDistance(pGps.lat, pGps.lng, curGps.lat, curGps.lng) : 10;
         campusStore.addEdge({
           id: `e-road-${roadLastNodeId}-${newNodeId}`,
           from: roadLastNodeId,
@@ -1916,7 +1919,9 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
         setEdgeStartNodeId(null);
       } else {
         const startN = storeData.nodes.find((n) => n.id === edgeStartNodeId);
-        const dist = Math.round(Math.hypot((startN?.x ?? 0) - node.x, (startN?.y ?? 0) - node.y) / 4);
+        const sGps = startN ? (startN.lat && startN.lng ? { lat: startN.lat, lng: startN.lng } : canvasToGps(startN.x, startN.y)) : canvasToGps(0, 0);
+        const nGps = node.lat && node.lng ? { lat: node.lat, lng: node.lng } : canvasToGps(node.x, node.y);
+        const dist = calculateGeographicDistance(sGps.lat, sGps.lng, nGps.lat, nGps.lng);
         const result = campusStore.addEdge({
           id: `e-${edgeStartNodeId}-${node.id}`,
           from: edgeStartNodeId,
@@ -1944,7 +1949,9 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
     } else if (activeTool === "ROAD") {
       if (roadLastNodeId && roadLastNodeId !== node.id) {
         const prevNode = storeData.nodes.find((n) => n.id === roadLastNodeId);
-        const dist = prevNode ? Math.round(Math.hypot(prevNode.x - node.x, prevNode.y - node.y) / 4) : 10;
+        const pGps = prevNode ? (prevNode.lat && prevNode.lng ? { lat: prevNode.lat, lng: prevNode.lng } : canvasToGps(prevNode.x, prevNode.y)) : canvasToGps(node.x, node.y);
+        const nGps = node.lat && node.lng ? { lat: node.lat, lng: node.lng } : canvasToGps(node.x, node.y);
+        const dist = prevNode ? calculateGeographicDistance(pGps.lat, pGps.lng, nGps.lat, nGps.lng) : 10;
         campusStore.addEdge({
           id: `e-road-${roadLastNodeId}-${node.id}`,
           from: roadLastNodeId,

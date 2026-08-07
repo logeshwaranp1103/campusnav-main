@@ -1,4 +1,5 @@
 import { canvasToGps } from "../../lib/geo/boundary";
+import { calculateGeographicDistance } from "../../lib/geo/haversine";
 import {
   getFloorCode,
   type Building,
@@ -997,7 +998,9 @@ class CampusStore {
         })
         .slice(0, 2)
         .forEach((target) => {
-          const d = Math.round(Math.hypot(target.x - node.x, target.y - node.y) / 4);
+          const nGps = node.lat && node.lng ? { lat: node.lat, lng: node.lng } : canvasToGps(node.x, node.y);
+          const tGps = target.lat && target.lng ? { lat: target.lat, lng: target.lng } : canvasToGps(target.x, target.y);
+          const d = calculateGeographicDistance(nGps.lat, nGps.lng, tGps.lat, tGps.lng);
           this.addEdgeInternal({
             id: `e-${node.id}-${target.id}`,
             from: node.id,
@@ -1788,8 +1791,12 @@ class CampusStore {
       prevData: edge,
     });
 
-    const dist1 = Math.max(1, Math.round(Math.hypot(fromNode.x - x, fromNode.y - y) / 4));
-    const dist2 = Math.max(1, Math.round(Math.hypot(toNode.x - x, toNode.y - y) / 4));
+    const fnGps = fromNode.lat && fromNode.lng ? { lat: fromNode.lat, lng: fromNode.lng } : canvasToGps(fromNode.x, fromNode.y);
+    const tnGps = toNode.lat && toNode.lng ? { lat: toNode.lat, lng: toNode.lng } : canvasToGps(toNode.x, toNode.y);
+    const splitGps = canvasToGps(x, y);
+
+    const dist1 = calculateGeographicDistance(fnGps.lat, fnGps.lng, splitGps.lat, splitGps.lng);
+    const dist2 = calculateGeographicDistance(splitGps.lat, splitGps.lng, tnGps.lat, tnGps.lng);
 
     const edge1: Edge = {
       id: `e-${fromNode.id}-${newNodeId}`,

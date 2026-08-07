@@ -1,5 +1,7 @@
 import type { Node } from "../../shared/data/campus";
 import type { PathResult } from "./dijkstra";
+import { calculateGeographicDistance } from "../geo/haversine";
+import { canvasToGps } from "../geo/boundary";
 
 export interface OffRouteCheckResult {
   isOffRoute: boolean;
@@ -8,7 +10,7 @@ export interface OffRouteCheckResult {
 }
 
 export function checkOffRoute(
-  userPos: { x: number; y: number; floorId: string },
+  userPos: { x: number; y: number; lat?: number; lng?: number; floorId: string },
   currentRoute: PathResult | null,
   thresholdMeters = 20
 ): OffRouteCheckResult {
@@ -26,8 +28,11 @@ export function checkOffRoute(
   let minDistance = Infinity;
   let closestNodeId: string | undefined = undefined;
 
+  const userGps = userPos.lat && userPos.lng ? { lat: userPos.lat, lng: userPos.lng } : canvasToGps(userPos.x, userPos.y);
+
   floorNodes.forEach((node) => {
-    const dist = Math.hypot(userPos.x - node.x, userPos.y - node.y);
+    const nodeGps = node.lat && node.lng ? { lat: node.lat, lng: node.lng } : canvasToGps(node.x, node.y);
+    const dist = calculateGeographicDistance(userGps.lat, userGps.lng, nodeGps.lat, nodeGps.lng);
     if (dist < minDistance) {
       minDistance = dist;
       closestNodeId = node.id;
@@ -42,13 +47,17 @@ export function checkOffRoute(
 }
 
 export function detectEntranceTransition(
-  userPos: { x: number; y: number; floorId: string },
+  userPos: { x: number; y: number; lat?: number; lng?: number; floorId: string },
   nodes: Node[],
-  threshold = 30
+  thresholdMeters = 30
 ): { transition: "ENTER_BUILDING" | "EXIT_BUILDING" | null; entranceNode?: Node } {
-  const nearbyEntrance = nodes.find(
-    (n) => (n.type === "BUILDING_ENTRANCE" || n.type === "ENTRANCE" || n.isEntranceNode) && Math.hypot(n.x - userPos.x, n.y - userPos.y) <= threshold
-  );
+  const userGps = userPos.lat && userPos.lng ? { lat: userPos.lat, lng: userPos.lng } : canvasToGps(userPos.x, userPos.y);
+
+  const nearbyEntrance = nodes.find((n) => {
+    if (!n.type || (n.type !== "BUILDING_ENTRANCE" && n.type !== "ENTRANCE" && !n.isEntranceNode)) return false;
+    const nGps = n.lat && n.lng ? { lat: n.lat, lng: n.lng } : canvasToGps(n.x, n.y);
+    return calculateGeographicDistance(userGps.lat, userGps.lng, nGps.lat, nGps.lng) <= thresholdMeters;
+  });
 
   if (!nearbyEntrance) return { transition: null };
 

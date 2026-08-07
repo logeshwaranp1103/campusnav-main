@@ -125,12 +125,9 @@ export function calculateEdgePathSplit(
     const fromNode = sequence[i];
     const toNode = sequence[i + 1];
 
-    let dist = 10;
-    if (fromNode.lat && fromNode.lng && toNode.lat && toNode.lng) {
-      dist = calculateHaversineDistance(fromNode.lat, fromNode.lng, toNode.lat, toNode.lng);
-    } else {
-      dist = Math.max(1, Math.round(Math.hypot(toNode.x - fromNode.x, toNode.y - fromNode.y) * 0.25));
-    }
+    const fnGps = fromNode.lat && fromNode.lng ? { lat: fromNode.lat, lng: fromNode.lng } : canvasToGps(fromNode.x, fromNode.y);
+    const tnGps = toNode.lat && toNode.lng ? { lat: toNode.lat, lng: toNode.lng } : canvasToGps(toNode.x, toNode.y);
+    const dist = calculateHaversineDistance(fnGps.lat, fnGps.lng, tnGps.lat, tnGps.lng);
 
     edgesToCreate.push({
       fromNode,

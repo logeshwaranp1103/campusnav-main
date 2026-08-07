@@ -539,74 +539,213 @@ function MapCanvas({
     return () => svg.removeEventListener("wheel", handleWheel);
   }, []);
 
-  // Touch gesture handlers for Mobile (1-finger momentum pan, 2-finger pinch zoom, double-tap zoom)
-  const touchRef = useRef<{ x: number; y: number; dist?: number } | null>(null);
+  const internalZoomRef = useRef(internalZoom);
+  internalZoomRef.current = internalZoom;
 
-  const handleTouchStart = (e: React.TouchEvent<SVGSVGElement>) => {
-    stopInertia();
-    const now = Date.now();
-    if (e.touches.length === 1) {
-      const touch = e.touches[0];
-      // Double-tap zoom detection (<300ms)
-      if (now - lastTapTimeRef.current < 300) {
-        setInternalZoom((prev) => Math.min(5, prev * 1.5));
-        lastTapTimeRef.current = 0;
-        return;
+  const boundsRef = useRef(bounds);
+  boundsRef.current = bounds;
+
+  const currentZoomRef = useRef(currentZoom);
+  currentZoomRef.current = currentZoom;
+
+  // Touch gesture state ref for Mobile (1-finger momentum pan, 2-finger pinch zoom, double-tap zoom)
+  const touchGestureRef = useRef<{
+    mode: "NONE" | "PAN" | "PINCH";
+    initialDist: number;
+    initialZoom: number;
+    lastPos: { x: number; y: number };
+    lastCenter: { x: number; y: number };
+  }>({
+    mode: "NONE",
+    initialDist: 0,
+    initialZoom: 1,
+    lastPos: { x: 0, y: 0 },
+    lastCenter: { x: 0, y: 0 },
+  });
+
+  // Native Non-Passive Touch Listeners for robust mobile gestures & pinch-to-zoom
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+
+    const getDistance = (t1: Touch, t2: Touch) =>
+      Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+
+    const getCenter = (t1: Touch, t2: Touch) => ({
+      x: (t1.clientX + t2.clientX) / 2,
+      y: (t1.clientY + t2.clientY) / 2,
+    });
+
+    const handleTouchStart = (e: TouchEvent) => {
+      stopInertia();
+      const now = Date.now();
+
+      if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        // Double-tap zoom detection (<300ms)
+        if (now - lastTapTimeRef.current < 300) {
+          e.preventDefault();
+          setInternalZoom((prev) => Math.min(5, prev * 1.5));
+          lastTapTimeRef.current = 0;
+          touchGestureRef.current.mode = "NONE";
+          return;
+        }
+        lastTapTimeRef.current = now;
+
+        touchGestureRef.current = {
+          mode: "PAN",
+          initialDist: 0,
+          initialZoom: internalZoomRef.current,
+          lastPos: { x: touch.clientX, y: touch.clientY },
+          lastCenter: { x: touch.clientX, y: touch.clientY },
+        };
+        lastTouchPosRef.current = { x: touch.clientX, y: touch.clientY };
+        lastTouchTimeRef.current = now;
+        velocityRef.current = { vx: 0, vy: 0 };
+      } else if (e.touches.length >= 2) {
+        e.preventDefault();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const dist = getDistance(t1, t2);
+        const center = getCenter(t1, t2);
+
+        touchGestureRef.current = {
+          mode: "PINCH",
+          initialDist: dist || 1,
+          initialZoom: internalZoomRef.current,
+          lastPos: center,
+          lastCenter: center,
+        };
       }
-      lastTapTimeRef.current = now;
+    };
 
-      touchRef.current = { x: touch.clientX, y: touch.clientY };
-      lastTouchPosRef.current = { x: touch.clientX, y: touch.clientY };
-      lastTouchTimeRef.current = now;
+    const handleTouchMove = (e: TouchEvent) => {
+      if (!svgRef.current) return;
+      const gState = touchGestureRef.current;
+      if (gState.mode === "NONE") return;
+
+      const rect = svgRef.current.getBoundingClientRect();
+      const bW = boundsRef.current.w;
+      const bH = boundsRef.current.h;
+      const cZoom = currentZoomRef.current;
+      const effectiveW = bW / (cZoom || 1);
+      const effectiveH = bH / (cZoom || 1);
+      const scaleX = effectiveW / (rect.width || 1);
+      const scaleY = effectiveH / (rect.height || 1);
+      const now = Date.now();
+      const dt = Math.max(1, now - (lastTouchTimeRef.current || now));
+
+      if (e.touches.length >= 2) {
+        e.preventDefault();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const currentDist = getDistance(t1, t2);
+        const currentCenter = getCenter(t1, t2);
+
+        if (gState.mode !== "PINCH" || !gState.initialDist) {
+          touchGestureRef.current = {
+            mode: "PINCH",
+            initialDist: currentDist || 1,
+            initialZoom: internalZoomRef.current,
+            lastPos: currentCenter,
+            lastCenter: currentCenter,
+          };
+          return;
+        }
+
+        const ratio = currentDist / gState.initialDist;
+        const targetZoom = Math.min(5, Math.max(0.4, gState.initialZoom * ratio));
+        setInternalZoom(targetZoom);
+
+        // Center point panning delta during pinch
+        const dx = (currentCenter.x - gState.lastCenter.x) * scaleX;
+        const dy = (currentCenter.y - gState.lastCenter.y) * scaleY;
+        setPan((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+        gState.lastCenter = currentCenter;
+      } else if (e.touches.length === 1) {
+        e.preventDefault();
+        const touch = e.touches[0];
+        if (gState.mode === "PINCH") {
+          // Transition back to PAN smoothly if one finger lifted
+          touchGestureRef.current = {
+            mode: "PAN",
+            initialDist: 0,
+            initialZoom: internalZoomRef.current,
+            lastPos: { x: touch.clientX, y: touch.clientY },
+            lastCenter: { x: touch.clientX, y: touch.clientY },
+          };
+          lastTouchPosRef.current = { x: touch.clientX, y: touch.clientY };
+          lastTouchTimeRef.current = now;
+          velocityRef.current = { vx: 0, vy: 0 };
+          return;
+        }
+
+        const dx = (touch.clientX - gState.lastPos.x) * scaleX;
+        const dy = (touch.clientY - gState.lastPos.y) * scaleY;
+
+        setPan((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+
+        const vx = ((touch.clientX - lastTouchPosRef.current.x) * scaleX) / (dt / 16);
+        const vy = ((touch.clientY - lastTouchPosRef.current.y) * scaleY) / (dt / 16);
+        velocityRef.current = { vx, vy };
+
+        gState.lastPos = { x: touch.clientX, y: touch.clientY };
+        lastTouchPosRef.current = { x: touch.clientX, y: touch.clientY };
+        lastTouchTimeRef.current = now;
+      }
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      const gState = touchGestureRef.current;
+      if (e.touches.length === 0) {
+        if (gState.mode === "PAN" && Math.hypot(velocityRef.current.vx, velocityRef.current.vy) > 0.5) {
+          startInertia();
+        }
+        touchGestureRef.current = {
+          mode: "NONE",
+          initialDist: 0,
+          initialZoom: 1,
+          lastPos: { x: 0, y: 0 },
+          lastCenter: { x: 0, y: 0 },
+        };
+      } else if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        touchGestureRef.current = {
+          mode: "PAN",
+          initialDist: 0,
+          initialZoom: internalZoomRef.current,
+          lastPos: { x: touch.clientX, y: touch.clientY },
+          lastCenter: { x: touch.clientX, y: touch.clientY },
+        };
+        lastTouchPosRef.current = { x: touch.clientX, y: touch.clientY };
+        lastTouchTimeRef.current = Date.now();
+        velocityRef.current = { vx: 0, vy: 0 };
+      }
+    };
+
+    const handleTouchCancel = () => {
+      touchGestureRef.current = {
+        mode: "NONE",
+        initialDist: 0,
+        initialZoom: 1,
+        lastPos: { x: 0, y: 0 },
+        lastCenter: { x: 0, y: 0 },
+      };
       velocityRef.current = { vx: 0, vy: 0 };
-    } else if (e.touches.length === 2) {
-      const dist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      touchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, dist };
-    }
-  };
+    };
 
-  const handleTouchMove = (e: React.TouchEvent<SVGSVGElement>) => {
-    if (!touchRef.current || !svgRef.current) return;
-    const rect = svgRef.current.getBoundingClientRect();
-    const scaleX = effectiveW / rect.width;
-    const scaleY = effectiveH / rect.height;
-    const now = Date.now();
-    const dt = Math.max(1, now - (lastTouchTimeRef.current || now));
+    svg.addEventListener("touchstart", handleTouchStart, { passive: false });
+    svg.addEventListener("touchmove", handleTouchMove, { passive: false });
+    svg.addEventListener("touchend", handleTouchEnd, { passive: false });
+    svg.addEventListener("touchcancel", handleTouchCancel, { passive: false });
 
-    if (e.touches.length === 1) {
-      const touch = e.touches[0];
-      const dx = (touch.clientX - touchRef.current.x) * scaleX;
-      const dy = (touch.clientY - touchRef.current.y) * scaleY;
-
-      setPan((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
-
-      const vx = ((touch.clientX - lastTouchPosRef.current.x) * scaleX) / (dt / 16);
-      const vy = ((touch.clientY - lastTouchPosRef.current.y) * scaleY) / (dt / 16);
-      velocityRef.current = { vx, vy };
-
-      touchRef.current = { x: touch.clientX, y: touch.clientY };
-      lastTouchPosRef.current = { x: touch.clientX, y: touch.clientY };
-      lastTouchTimeRef.current = now;
-    } else if (e.touches.length === 2 && touchRef.current.dist) {
-      const newDist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      const ratio = newDist / touchRef.current.dist;
-      setInternalZoom((prev) => Math.min(5, Math.max(0.4, prev * ratio)));
-      touchRef.current.dist = newDist;
-    }
-  };
-
-  const handleTouchEnd = () => {
-    touchRef.current = null;
-    if (Math.hypot(velocityRef.current.vx, velocityRef.current.vy) > 0.5) {
-      startInertia();
-    }
-  };
+    return () => {
+      svg.removeEventListener("touchstart", handleTouchStart);
+      svg.removeEventListener("touchmove", handleTouchMove);
+      svg.removeEventListener("touchend", handleTouchEnd);
+      svg.removeEventListener("touchcancel", handleTouchCancel);
+    };
+  }, []);
 
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -625,9 +764,6 @@ function MapCanvas({
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
       style={{ willChange: "transform", transform: "translateZ(0)" }}
       className={cn(
         "h-full w-full touch-none select-none transition-cursor bg-[#f8fafc]",
