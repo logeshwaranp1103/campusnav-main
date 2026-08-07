@@ -160,8 +160,22 @@ class CampusStore {
     this.loadFromLocalStorage();
   }
 
+  private saveWorkingDraftToDatabase() {
+    if (typeof window === "undefined") return;
+    try {
+      fetch("/api/admin/campus-graph/draft", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ snapshot: this.getWorkingData() }),
+      }).catch((e) => console.warn("Failed to sync working draft to database:", e));
+    } catch (e) {
+      console.warn("Failed to persist draft to server database:", e);
+    }
+  }
+
   private saveToLocalStorage() {
     if (typeof window === "undefined") return;
+    this.saveWorkingDraftToDatabase();
     try {
       const working = {
         buildings: this.buildings,
@@ -2121,45 +2135,54 @@ class CampusStore {
   public async syncWithServer() {
     if (typeof window === "undefined") return;
     try {
-      const res = await fetch("/api/published-graph", { cache: "no-store" });
-      if (!res.ok) return;
-      const json = await res.json();
-      const graph = json?.graph;
-      if (graph && Array.isArray(graph.buildings) && (graph.buildings.length > 0 || graph.nodes?.length > 0)) {
-        this.publishedGraph = {
-          buildings: graph.buildings || [],
-          floors: graph.floors || [],
-          nodes: graph.nodes || [],
-          edges: graph.edges || [],
-          destinations: graph.destinations || [],
-          events: graph.events || [],
-          obstacles: graph.obstacles || [],
-          stairGroups: graph.stairGroups || [],
-          liftGroups: graph.liftGroups || [],
-          doors: graph.doors || [],
-          corridors: graph.corridors || [],
-        };
-
-        // If local working data on this device is empty, populate from server published graph!
-        if (this.buildings.length === 0 && this.nodes.length === 0) {
-          this.buildings = JSON.parse(JSON.stringify(this.publishedGraph.buildings));
-          this.floors = JSON.parse(JSON.stringify(this.publishedGraph.floors));
-          this.nodes = JSON.parse(JSON.stringify(this.publishedGraph.nodes));
-          this.edges = JSON.parse(JSON.stringify(this.publishedGraph.edges));
-          this.destinations = JSON.parse(JSON.stringify(this.publishedGraph.destinations));
-          this.events = JSON.parse(JSON.stringify(this.publishedGraph.events));
-          this.obstacles = JSON.parse(JSON.stringify(this.publishedGraph.obstacles));
-          this.stairGroups = JSON.parse(JSON.stringify(this.publishedGraph.stairGroups || []));
-          this.liftGroups = JSON.parse(JSON.stringify(this.publishedGraph.liftGroups || []));
-          this.doors = JSON.parse(JSON.stringify(this.publishedGraph.doors || []));
-          this.corridors = JSON.parse(JSON.stringify(this.publishedGraph.corridors || []));
+      // 1. Sync published graph from server PostgreSQL database
+      const resPub = await fetch("/api/published-graph", { cache: "no-store" });
+      if (resPub.ok) {
+        const jsonPub = await resPub.json();
+        const graph = jsonPub?.graph;
+        if (graph && Array.isArray(graph.buildings) && (graph.buildings.length > 0 || graph.nodes?.length > 0)) {
+          this.publishedGraph = {
+            buildings: graph.buildings || [],
+            floors: graph.floors || [],
+            nodes: graph.nodes || [],
+            edges: graph.edges || [],
+            destinations: graph.destinations || [],
+            events: graph.events || [],
+            obstacles: graph.obstacles || [],
+            stairGroups: graph.stairGroups || [],
+            liftGroups: graph.liftGroups || [],
+            doors: graph.doors || [],
+            corridors: graph.corridors || [],
+          };
+          if (this.buildings.length === 0 && this.nodes.length === 0) {
+            this.buildings = JSON.parse(JSON.stringify(this.publishedGraph.buildings));
+            this.floors = JSON.parse(JSON.stringify(this.publishedGraph.floors));
+            this.nodes = JSON.parse(JSON.stringify(this.publishedGraph.nodes));
+            this.edges = JSON.parse(JSON.stringify(this.publishedGraph.edges));
+            this.destinations = JSON.parse(JSON.stringify(this.publishedGraph.destinations));
+            this.events = JSON.parse(JSON.stringify(this.publishedGraph.events));
+            this.obstacles = JSON.parse(JSON.stringify(this.publishedGraph.obstacles));
+            this.stairGroups = JSON.parse(JSON.stringify(this.publishedGraph.stairGroups || []));
+            this.liftGroups = JSON.parse(JSON.stringify(this.publishedGraph.liftGroups || []));
+            this.doors = JSON.parse(JSON.stringify(this.publishedGraph.doors || []));
+            this.corridors = JSON.parse(JSON.stringify(this.publishedGraph.corridors || []));
+          }
+          this.notify();
         }
+      }
 
-        this.saveToLocalStorage();
-        this.notify();
+      // 2. Sync working draft graph from server PostgreSQL database
+      const resDraft = await fetch("/api/admin/campus-graph/draft", { cache: "no-store" });
+      if (resDraft.ok) {
+        const jsonDraft = await resDraft.json();
+        const draft = jsonDraft?.draft;
+        if (draft && Array.isArray(draft.buildings) && (draft.buildings.length > 0 || draft.nodes?.length > 0)) {
+          this.loadSnapshot(draft);
+          this.notify();
+        }
       }
     } catch (e) {
-      console.warn("Failed to sync published graph with server:", e);
+      console.warn("Failed to sync campus graph with server database:", e);
     }
   }
 

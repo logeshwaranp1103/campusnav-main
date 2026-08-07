@@ -3,7 +3,7 @@ import { campusStore } from "@/shared/lib/campus-store";
 import { getActivePublishedGraph, publishDraftGraph } from "@/lib/services/publish-service";
 
 export async function GET() {
-  const publishedServiceData = getActivePublishedGraph();
+  const publishedServiceData = await getActivePublishedGraph();
   const publishedStoreData = campusStore.getPublishedData();
 
   const data = publishedServiceData?.snapshot ?? publishedStoreData;

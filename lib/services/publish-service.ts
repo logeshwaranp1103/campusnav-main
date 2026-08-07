@@ -1,5 +1,4 @@
-import fs from "fs";
-import path from "path";
+import { prisma } from "../db";
 import { validateCampusGraph, type GraphValidationReport } from "../validation/graph-validator";
 import { logAuditEvent } from "./audit-service";
 import type { Building, Floor, Node, Edge, Destination, Obstacle } from "../../shared/data/campus";
@@ -22,39 +21,6 @@ export type DraftSnapshot = {
   [key: string]: unknown;
 };
 
-const CACHE_DIR = path.join(process.cwd(), ".data");
-const CACHE_FILE = path.join(CACHE_DIR, "published_graph.json");
-
-function ensureCacheDir() {
-  if (!fs.existsSync(CACHE_DIR)) {
-    fs.mkdirSync(CACHE_DIR, { recursive: true });
-  }
-}
-
-function loadPersistedPublishedGraph() {
-  try {
-    if (fs.existsSync(CACHE_FILE)) {
-      const raw = fs.readFileSync(CACHE_FILE, "utf-8");
-      const parsed = JSON.parse(raw);
-      if (parsed && parsed.snapshot) {
-        return parsed;
-      }
-    }
-  } catch (e) {
-    console.warn("Failed to load persisted published graph from disk:", e);
-  }
-  return null;
-}
-
-function savePersistedPublishedGraph(data: any) {
-  try {
-    ensureCacheDir();
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2), "utf-8");
-  } catch (e) {
-    console.warn("Failed to save published graph to disk:", e);
-  }
-}
-
 let activePublishedSnapshot: { version: number; snapshot: DraftSnapshot; publishedAt: Date; publishedBy: string; notes: string } | null = null;
 
 export async function publishDraftGraph(
@@ -64,7 +30,6 @@ export async function publishDraftGraph(
 ): Promise<PublishResult> {
   const { buildings, floors, nodes, edges, destinations, obstacles } = draftSnapshot;
 
-  // Run 10-Point Graph Validation Engine Guardrails
   const validationReport = validateCampusGraph(
     buildings || [],
     floors || [],
@@ -74,7 +39,6 @@ export async function publishDraftGraph(
     obstacles || []
   );
 
-  // Reject publishing if critical errors exist
   if (validationReport.issues.some((i) => i.severity === "CRITICAL")) {
     return {
       success: false,
@@ -83,7 +47,7 @@ export async function publishDraftGraph(
     };
   }
 
-  const currentSnapshot = getActivePublishedGraph();
+  const currentSnapshot = await getActivePublishedGraph();
   const versionNum = (currentSnapshot?.version ?? 0) + 1;
   const publishedAt = new Date();
 
@@ -95,7 +59,32 @@ export async function publishDraftGraph(
     notes: notes || "Published campus graph update",
   };
 
-  savePersistedPublishedGraph(activePublishedSnapshot);
+  if (prisma) {
+    try {
+      const dbPromise = prisma.publishedGraph.upsert({
+        where: { id: "active-published" },
+        update: {
+          version: versionNum,
+          snapshot: draftSnapshot as any,
+          publishedAt,
+          publishedBy: userId,
+        },
+        create: {
+          id: "active-published",
+          version: versionNum,
+          snapshot: draftSnapshot as any,
+          publishedAt,
+          publishedBy: userId,
+        },
+      });
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("DB timeout")), 800)
+      );
+      await Promise.race([dbPromise, timeoutPromise]);
+    } catch (e) {
+      console.warn("Failed to persist published graph to Prisma database:", e);
+    }
+  }
 
   await logAuditEvent({
     userId,
@@ -113,9 +102,30 @@ export async function publishDraftGraph(
   };
 }
 
-export function getActivePublishedGraph() {
-  if (!activePublishedSnapshot) {
-    activePublishedSnapshot = loadPersistedPublishedGraph();
+export async function getActivePublishedGraph() {
+  if (prisma) {
+    try {
+      const dbPromise = prisma.publishedGraph.findUnique({
+        where: { id: "active-published" },
+      });
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("DB timeout")), 800)
+      );
+      const dbRecord = (await Promise.race([dbPromise, timeoutPromise])) as any;
+      if (dbRecord && dbRecord.snapshot) {
+        activePublishedSnapshot = {
+          version: dbRecord.version,
+          snapshot: dbRecord.snapshot as DraftSnapshot,
+          publishedAt: dbRecord.publishedAt,
+          publishedBy: dbRecord.publishedBy || "admin",
+          notes: "Database published graph",
+        };
+        return activePublishedSnapshot;
+      }
+    } catch {
+      // Fallback if DB disconnected or timed out
+    }
   }
+
   return activePublishedSnapshot;
 }
