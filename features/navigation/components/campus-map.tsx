@@ -7,7 +7,7 @@ import { campusStore } from "@/shared/lib/campus-store";
 import type { Node, Building, Floor, Edge, Destination } from "@/shared/data/campus";
 import type { Route } from "@/features/navigation/services/graph";
 import { getObstructedEdgeIds } from "@/lib/routing/graph";
-import { Building2, Layers, Compass, Locate, AlertTriangle, Sparkles, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
+import { Building2, Layers, Compass, Locate, AlertTriangle, Sparkles, ZoomIn, ZoomOut, Maximize2, ChevronDown } from "lucide-react";
 import { useVisitorGps } from "@/shared/hooks/use-visitor-gps";
 import { DestinationDetailsDrawer } from "./destination-details-drawer";
 import { isEventActive } from "@/shared/lib/event-utils";
@@ -25,6 +25,7 @@ export function CampusMap({ route, livePosition, progress, onNavigateToDest }: P
   const [view, setView] = useState<string>("f-out");
   const [selectedDestForDetails, setSelectedDestForDetails] = useState<Destination | null>(null);
   const [autoRotate, setAutoRotate] = useState(false);
+  const [showFloorMenuMobile, setShowFloorMenuMobile] = useState(false);
 
   // Map Zoom & Pan state passed down to MapCanvas via trigger actions
   const [zoomLevel, setZoomLevel] = useState(1);
@@ -65,6 +66,13 @@ export function CampusMap({ route, livePosition, progress, onNavigateToDest }: P
   }, [publishedData.floors]);
 
   const activeView = validFloorIds.has(view) ? view : "f-out";
+
+  const activeFloorLabel = useMemo(() => {
+    if (activeView === "f-out") return "Outdoor";
+    const f = publishedData.floors.find((x) => x.id === activeView);
+    const b = f ? publishedData.buildings.find((x) => x.id === f.buildingId) : undefined;
+    return `${b?.shortCode ?? ""} · ${f?.name ?? "Floor"}`;
+  }, [activeView, publishedData.floors, publishedData.buildings]);
 
   const allBuildings = publishedData.buildings;
   const allFloors = publishedData.floors;
@@ -115,27 +123,52 @@ export function CampusMap({ route, livePosition, progress, onNavigateToDest }: P
           </button>
         </div>
 
-        {/* Floor Selection */}
-        <div className="flex flex-col gap-1 rounded-xl border bg-[rgb(var(--card))]/90 p-1.5 shadow-lg backdrop-blur-md w-fit">
-          <FloorButton
-            active={activeView === "f-out"}
-            onClick={() => setView("f-out")}
-            icon={<Building2 className="h-3.5 w-3.5" />}
-            label="Outdoor"
-          />
-          {indoorFloors.map((fid) => {
-            const f = allFloors.find((x) => x.id === fid);
-            const b = f ? allBuildings.find((x) => x.id === f.buildingId) : undefined;
-            return (
-              <FloorButton
-                key={fid}
-                active={activeView === fid}
-                onClick={() => setView(fid)}
-                icon={<Layers className="h-3.5 w-3.5" />}
-                label={`${b?.shortCode ?? ""} · ${f?.name ?? "Floor"}`}
-              />
-            );
-          })}
+        {/* Floor Selection (Mobile: Compact Toggle Button + Collapsible Dropdown List) */}
+        <div className="flex flex-col items-end gap-1">
+          {/* Mobile Toggle Button (Symbol Icon only) */}
+          <button
+            onClick={() => setShowFloorMenuMobile((prev) => !prev)}
+            className="flex h-9 min-w-9 items-center justify-center gap-1 px-2 rounded-xl border bg-[rgb(var(--card))]/95 text-xs font-semibold shadow-lg backdrop-blur-md text-[rgb(var(--fg))] hover:bg-[rgb(var(--muted))] active:scale-95 transition-all cursor-pointer border-[rgb(var(--border))] md:hidden"
+            title={`Select Floor Level (${activeFloorLabel})`}
+            aria-label={`Select Floor (${activeFloorLabel})`}
+          >
+            <Layers className="h-4.5 w-4.5 text-[rgb(var(--primary))] shrink-0" />
+            <ChevronDown className={cn("h-3 w-3 text-[rgb(var(--muted-fg))] transition-transform duration-200", showFloorMenuMobile && "rotate-180")} />
+          </button>
+
+          {/* Floor List (Always visible on desktop/tablet md:flex, toggled on mobile) */}
+          <div
+            className={cn(
+              "flex-col gap-1 rounded-xl border bg-[rgb(var(--card))]/95 p-1.5 shadow-lg backdrop-blur-md w-fit max-h-60 overflow-y-auto transition-all",
+              showFloorMenuMobile ? "flex" : "hidden md:flex"
+            )}
+          >
+            <FloorButton
+              active={activeView === "f-out"}
+              onClick={() => {
+                setView("f-out");
+                setShowFloorMenuMobile(false);
+              }}
+              icon={<Building2 className="h-3.5 w-3.5" />}
+              label="Outdoor"
+            />
+            {indoorFloors.map((fid) => {
+              const f = allFloors.find((x) => x.id === fid);
+              const b = f ? allBuildings.find((x) => x.id === f.buildingId) : undefined;
+              return (
+                <FloorButton
+                  key={fid}
+                  active={activeView === fid}
+                  onClick={() => {
+                    setView(fid);
+                    setShowFloorMenuMobile(false);
+                  }}
+                  icon={<Layers className="h-3.5 w-3.5" />}
+                  label={`${b?.shortCode ?? ""} · ${f?.name ?? "Floor"}`}
+                />
+              );
+            })}
+          </div>
         </div>
 
         {/* User Layer Toggle: Obstacles (Mobile: Icon only, Desktop/Tablet: Icon + Text) */}
@@ -258,12 +291,23 @@ function MapCanvas({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
 
+  // Velocity tracking & Momentum Inertia Panning
+  const velocityRef = useRef<{ vx: number; vy: number }>({ vx: 0, vy: 0 });
+  const lastTouchTimeRef = useRef<number>(0);
+  const lastTouchPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const animFrameRef = useRef<number | null>(null);
+  const lastTapTimeRef = useRef<number>(0);
+
   const currentZoom = externalZoom * internalZoom;
 
   // Reset pan & internal zoom when floorId changes or resetTrigger fires
   useEffect(() => {
     setInternalZoom(1);
     setPan({ x: 0, y: 0 });
+    if (animFrameRef.current !== null) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
   }, [floorId, resetTrigger]);
 
   const nodeLookupMap = useMemo(() => {
@@ -420,11 +464,38 @@ function MapCanvas({
   const effectiveY = bounds.y + (bounds.h - effectiveH) / 2 - pan.y;
   const viewBoxStr = `${effectiveX} ${effectiveY} ${effectiveW} ${effectiveH}`;
 
+  const stopInertia = () => {
+    if (animFrameRef.current !== null) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+  };
+
+  const startInertia = () => {
+    stopInertia();
+    const step = () => {
+      const { vx, vy } = velocityRef.current;
+      if (Math.hypot(vx, vy) < 0.05) {
+        animFrameRef.current = null;
+        return;
+      }
+      setPan((prev) => ({ x: prev.x + vx, y: prev.y + vy }));
+      velocityRef.current.vx *= 0.91; // Smooth 60 FPS inertia friction decay
+      velocityRef.current.vy *= 0.91;
+      animFrameRef.current = requestAnimationFrame(step);
+    };
+    animFrameRef.current = requestAnimationFrame(step);
+  };
+
   // Mouse drag handlers for Desktop
   const handleMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
     if (e.button !== 0) return;
+    stopInertia();
     setIsDragging(true);
     setDragStart({ x: e.clientX, y: e.clientY });
+    lastTouchPosRef.current = { x: e.clientX, y: e.clientY };
+    lastTouchTimeRef.current = Date.now();
+    velocityRef.current = { vx: 0, vy: 0 };
   };
 
   const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
@@ -432,16 +503,27 @@ function MapCanvas({
     const rect = svgRef.current.getBoundingClientRect();
     const scaleX = effectiveW / rect.width;
     const scaleY = effectiveH / rect.height;
+    const now = Date.now();
+    const dt = Math.max(1, now - (lastTouchTimeRef.current || now));
 
     const dx = (e.clientX - dragStart.x) * scaleX;
     const dy = (e.clientY - dragStart.y) * scaleY;
 
+    const vx = ((e.clientX - lastTouchPosRef.current.x) * scaleX) / (dt / 16);
+    const vy = ((e.clientY - lastTouchPosRef.current.y) * scaleY) / (dt / 16);
+    velocityRef.current = { vx, vy };
+
     setPan((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
     setDragStart({ x: e.clientX, y: e.clientY });
+    lastTouchPosRef.current = { x: e.clientX, y: e.clientY };
+    lastTouchTimeRef.current = now;
   };
 
   const handleMouseUp = () => {
     setIsDragging(false);
+    if (Math.hypot(velocityRef.current.vx, velocityRef.current.vy) > 0.5) {
+      startInertia();
+    }
   };
 
   // Non-passive wheel zoom listener to avoid browser passive event listener warning
@@ -457,12 +539,26 @@ function MapCanvas({
     return () => svg.removeEventListener("wheel", handleWheel);
   }, []);
 
-  // Touch gesture handlers for Mobile (1-finger pan, 2-finger pinch zoom)
+  // Touch gesture handlers for Mobile (1-finger momentum pan, 2-finger pinch zoom, double-tap zoom)
   const touchRef = useRef<{ x: number; y: number; dist?: number } | null>(null);
 
   const handleTouchStart = (e: React.TouchEvent<SVGSVGElement>) => {
+    stopInertia();
+    const now = Date.now();
     if (e.touches.length === 1) {
-      touchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      const touch = e.touches[0];
+      // Double-tap zoom detection (<300ms)
+      if (now - lastTapTimeRef.current < 300) {
+        setInternalZoom((prev) => Math.min(5, prev * 1.5));
+        lastTapTimeRef.current = 0;
+        return;
+      }
+      lastTapTimeRef.current = now;
+
+      touchRef.current = { x: touch.clientX, y: touch.clientY };
+      lastTouchPosRef.current = { x: touch.clientX, y: touch.clientY };
+      lastTouchTimeRef.current = now;
+      velocityRef.current = { vx: 0, vy: 0 };
     } else if (e.touches.length === 2) {
       const dist = Math.hypot(
         e.touches[0].clientX - e.touches[1].clientX,
@@ -477,12 +573,23 @@ function MapCanvas({
     const rect = svgRef.current.getBoundingClientRect();
     const scaleX = effectiveW / rect.width;
     const scaleY = effectiveH / rect.height;
+    const now = Date.now();
+    const dt = Math.max(1, now - (lastTouchTimeRef.current || now));
 
     if (e.touches.length === 1) {
-      const dx = (e.touches[0].clientX - touchRef.current.x) * scaleX;
-      const dy = (e.touches[0].clientY - touchRef.current.y) * scaleY;
+      const touch = e.touches[0];
+      const dx = (touch.clientX - touchRef.current.x) * scaleX;
+      const dy = (touch.clientY - touchRef.current.y) * scaleY;
+
       setPan((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
-      touchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+
+      const vx = ((touch.clientX - lastTouchPosRef.current.x) * scaleX) / (dt / 16);
+      const vy = ((touch.clientY - lastTouchPosRef.current.y) * scaleY) / (dt / 16);
+      velocityRef.current = { vx, vy };
+
+      touchRef.current = { x: touch.clientX, y: touch.clientY };
+      lastTouchPosRef.current = { x: touch.clientX, y: touch.clientY };
+      lastTouchTimeRef.current = now;
     } else if (e.touches.length === 2 && touchRef.current.dist) {
       const newDist = Math.hypot(
         e.touches[0].clientX - e.touches[1].clientX,
@@ -496,6 +603,9 @@ function MapCanvas({
 
   const handleTouchEnd = () => {
     touchRef.current = null;
+    if (Math.hypot(velocityRef.current.vx, velocityRef.current.vy) > 0.5) {
+      startInertia();
+    }
   };
 
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -518,6 +628,7 @@ function MapCanvas({
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
+      style={{ willChange: "transform", transform: "translateZ(0)" }}
       className={cn(
         "h-full w-full touch-none select-none transition-cursor bg-[#f8fafc]",
         isDragging ? "cursor-grabbing" : "cursor-grab"
