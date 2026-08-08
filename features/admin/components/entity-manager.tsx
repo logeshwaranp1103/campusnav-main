@@ -432,7 +432,7 @@ export function EntityManager() {
         };
 
         campusStore.addBuilding(newBuilding);
-        toast({ type: "success", title: "Building Created", description: `Building "${newBuilding.name}" created with 4-corner GPS boundary!` });
+        toast({ type: "success", title: "Building Created & Synced", description: `Building "${newBuilding.name}" added to Store & CAD Editor! (ID: ${bldId})` });
         setBuildingForm((prev) => ({ ...prev, name: "", description: "" }));
         break;
       }
@@ -444,7 +444,7 @@ export function EntityManager() {
         }
 
         const newFloor = campusStore.addFloor(floorForm.buildingId, floorForm.name, Number(floorForm.ordinal));
-        toast({ type: "success", title: "Floor Added", description: `Floor level "${newFloor.name}" added to building!` });
+        toast({ type: "success", title: "Floor Added & Synced", description: `Floor level "${newFloor.name}" added to Store & CAD Editor! (ID: ${newFloor.id})` });
         setFloorForm((prev) => ({ ...prev, name: "" }));
         break;
       }
@@ -473,7 +473,7 @@ export function EntityManager() {
         };
 
         campusStore.addNode(newNode);
-        toast({ type: "success", title: "Node Created", description: `Node "${newNode.name}" added and synchronized.` });
+        toast({ type: "success", title: "Node Created & Synced", description: `Node "${newNode.name}" added to Store & CAD Editor!` });
         setNodeForm((prev) => ({ ...prev, name: "" }));
         break;
       }
@@ -516,7 +516,7 @@ export function EntityManager() {
         };
         campusStore.addDestination(newDest);
 
-        toast({ type: "success", title: "Room Created", description: `Room destination "${newDest.name}" added!` });
+        toast({ type: "success", title: "Room Destination Created", description: `Room "${newDest.name}" added to Store & CAD Editor!` });
         setRoomForm((prev) => ({ ...prev, name: "", roomNumber: "" }));
         break;
       }
@@ -538,11 +538,11 @@ export function EntityManager() {
         const nameStr = stairForm.name.trim() || `Staircase ${bld?.name || ""}`;
         const { x, y } = gpsToCanvas(lat, lng);
 
-        campusStore.createStairGroup(stairForm.buildingId, nameStr, stairForm.selectedFloorIds, { x, y });
+        const sg = campusStore.createStairGroup(stairForm.buildingId, nameStr, stairForm.selectedFloorIds, { x, y });
         toast({
           type: "success",
-          title: "Staircase Created",
-          description: `Staircase "${nameStr}" created connecting ${stairForm.selectedFloorIds.length} floor(s)!`,
+          title: "Staircase Created & Synced",
+          description: `Staircase "${nameStr}" created connecting ${stairForm.selectedFloorIds.length} floor(s)! Visible in CAD Editor.`,
         });
         setStairForm((prev) => ({ ...prev, name: "" }));
         break;
@@ -565,11 +565,11 @@ export function EntityManager() {
         const nameStr = liftForm.name.trim() || `Elevator ${bld?.name || ""}`;
         const { x, y } = gpsToCanvas(lat, lng);
 
-        campusStore.createLiftGroup(liftForm.buildingId, nameStr, liftForm.selectedFloorIds, { x, y });
+        const lg = campusStore.createLiftGroup(liftForm.buildingId, nameStr, liftForm.selectedFloorIds, { x, y });
         toast({
           type: "success",
-          title: "Lift Created",
-          description: `Lift "${nameStr}" created serving ${liftForm.selectedFloorIds.length} floor(s)!`,
+          title: "Lift Created & Synced",
+          description: `Lift "${nameStr}" created serving ${liftForm.selectedFloorIds.length} floor(s)! Visible in CAD Editor.`,
         });
         setLiftForm((prev) => ({ ...prev, name: "" }));
         break;
@@ -585,7 +585,7 @@ export function EntityManager() {
         const { lat, lng } = gps;
         const { x, y } = gpsToCanvas(lat, lng);
 
-        campusStore.addObstacle({
+        const newObs = {
           id: `obs-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           campusId: storeData.campus.id,
           x,
@@ -594,9 +594,10 @@ export function EntityManager() {
           reason: obstacleForm.name.trim(),
           severity: obstacleForm.obstacleType,
           expiresAt: obstacleForm.endTime || null,
-        });
+        };
+        campusStore.addObstacle(newObs);
 
-        toast({ type: "success", title: "Obstacle Added", description: `Obstacle hazard recorded and active.` });
+        toast({ type: "success", title: "Obstacle Added & Synced", description: `Obstacle hazard recorded and visible in CAD Editor.` });
         setObstacleForm((prev) => ({ ...prev, name: "" }));
         break;
       }
@@ -638,7 +639,7 @@ export function EntityManager() {
           });
 
           if (res.success) {
-            toast({ type: "success", title: "Edge Connected", description: `Direct edge connected (${single.distance}m)!` });
+            toast({ type: "success", title: "Edge Connected", description: `Direct edge connected (${single.distance}m)! Visible in CAD Editor.` });
           } else {
             toast({ type: "error", title: "Edge Exists", description: res.error || "Edge connection already exists." });
           }

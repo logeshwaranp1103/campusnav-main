@@ -408,6 +408,7 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
       targetX = bld.x + (bld.width ?? 180) / 2;
       targetY = bld.y + (bld.height ?? 120) / 2;
       selectedType = { type: "building", id: bld.id };
+      setVisibleLayers((l) => ({ ...l, buildings: true }));
     }
 
     // 2. Node
@@ -418,17 +419,20 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
         targetY = node.y;
         targetFloorId = node.floorId;
         selectedType = { type: "node", id: node.id };
+        setVisibleLayers((l) => ({ ...l, nodes: true }));
       }
     }
 
     // 3. Destination / Room
     if (targetX === null) {
       const dest = storeData.destinations.find((d) => d.id === focusParamId);
-      if (dest && dest.x !== undefined && dest.y !== undefined) {
-        targetX = dest.x;
-        targetY = dest.y;
-        targetFloorId = dest.floorId || null;
+      if (dest) {
+        const linkedNode = storeData.nodes.find((n) => n.id === dest.nodeId);
+        targetX = dest.x !== undefined ? dest.x : linkedNode?.x ?? null;
+        targetY = dest.y !== undefined ? dest.y : linkedNode?.y ?? null;
+        targetFloorId = dest.floorId || linkedNode?.floorId || null;
         selectedType = { type: "destination", id: dest.id };
+        setVisibleLayers((l) => ({ ...l, rooms: true }));
       }
     }
 
@@ -455,6 +459,7 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
           targetY = fromNode.y;
           targetFloorId = fromNode.floorId;
           selectedType = { type: "edge", id: edge.id };
+          setVisibleLayers((l) => ({ ...l, edges: true }));
         }
       }
     }
@@ -467,6 +472,7 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
         targetY = stairNode.y;
         targetFloorId = stairNode.floorId;
         selectedType = { type: "stairGroup", id: focusParamId };
+        setVisibleLayers((l) => ({ ...l, nodes: true }));
       }
     }
 
@@ -478,6 +484,7 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
         targetY = liftNode.y;
         targetFloorId = liftNode.floorId;
         selectedType = { type: "liftGroup", id: focusParamId };
+        setVisibleLayers((l) => ({ ...l, nodes: true }));
       }
     }
 
@@ -487,7 +494,9 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
       if (obs && obs.x !== undefined && obs.y !== undefined) {
         targetX = obs.x;
         targetY = obs.y;
+        targetFloorId = obs.floorId || null;
         selectedType = { type: "obstacle", id: obs.id };
+        setVisibleLayers((l) => ({ ...l, obstacles: true }));
       }
     }
 

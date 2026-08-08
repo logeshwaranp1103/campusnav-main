@@ -1691,6 +1691,7 @@ class CampusStore {
       timestamp: Date.now(),
       newData: edge,
     });
+    this.logAction("CREATE", `Edge (${edge.from} ↔ ${edge.to})`);
     this.redoStack = [];
     this.notify();
     return { success: true };
@@ -1853,6 +1854,7 @@ class CampusStore {
       timestamp: Date.now(),
       newData: d,
     });
+    this.logAction("CREATE", `Destination "${d.name}"`);
     this.redoStack = [];
     this.notify();
   }
@@ -1906,6 +1908,7 @@ class CampusStore {
       timestamp: Date.now(),
       newData: ev,
     });
+    this.logAction("CREATE", `Event "${ev.title}"`);
     this.redoStack = [];
     this.notify();
   }
@@ -1943,6 +1946,7 @@ class CampusStore {
       timestamp: Date.now(),
       newData: obs,
     });
+    this.logAction("CREATE", `Obstacle "${obs.reason ?? obs.id}"`);
     this.redoStack = [];
     this.notify();
   }
