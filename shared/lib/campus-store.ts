@@ -462,7 +462,10 @@ class CampusStore {
   }
 
   public getPublishedData() {
-    if (this.nodes.length > 0) {
+    if (
+      (!this.publishedGraph.buildings || this.publishedGraph.buildings.length === 0) &&
+      (this.buildings.length > 0 || this.nodes.length > 0)
+    ) {
       return this.getWorkingData();
     }
 
@@ -473,20 +476,20 @@ class CampusStore {
 
     const pub = {
       campus: this.campus,
-      buildings: this.publishedGraph.buildings,
-      floors: this.publishedGraph.floors,
-      nodes: this.publishedGraph.nodes,
-      edges: this.publishedGraph.edges,
-      destinations: this.publishedGraph.destinations,
-      events: this.publishedGraph.events,
+      buildings: this.publishedGraph.buildings || [],
+      floors: this.publishedGraph.floors || [],
+      nodes: this.publishedGraph.nodes || [],
+      edges: this.publishedGraph.edges || [],
+      destinations: this.publishedGraph.destinations || [],
+      events: this.publishedGraph.events || [],
       obstacles: mergedObstacles,
       stairGroups: this.publishedGraph.stairGroups || [],
       liftGroups: this.publishedGraph.liftGroups || [],
       corridors: this.publishedGraph.corridors || [],
     };
     if (
-      (pub.nodes.length === 0 || pub.edges.length < this.edges.length) &&
-      this.nodes.length > 0
+      (pub.buildings.length === 0 || pub.nodes.length === 0 || pub.edges.length < this.edges.length) &&
+      (this.buildings.length > 0 || this.nodes.length > 0)
     ) {
       return this.getWorkingData();
     }

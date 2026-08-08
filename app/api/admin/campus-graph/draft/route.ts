@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { getRelationalGraphFromDatabase } from "@/lib/services/publish-service";
 
 export async function GET() {
   try {
@@ -8,8 +9,19 @@ export async function GET() {
         where: { id: "active-draft" },
       });
 
-      if (draftRecord && draftRecord.snapshot) {
+      if (
+        draftRecord &&
+        draftRecord.snapshot &&
+        Array.isArray((draftRecord.snapshot as any).buildings) &&
+        (draftRecord.snapshot as any).buildings.length > 0
+      ) {
         return NextResponse.json({ draft: draftRecord.snapshot });
+      }
+
+      // Fallback: Check relational DB tables (building, floor, node, edge, destination)
+      const relational = await getRelationalGraphFromDatabase();
+      if (relational && Array.isArray(relational.buildings) && relational.buildings.length > 0) {
+        return NextResponse.json({ draft: relational });
       }
     }
     // No draft in DB — return empty graph structure

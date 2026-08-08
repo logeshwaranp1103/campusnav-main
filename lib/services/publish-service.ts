@@ -388,13 +388,31 @@ export async function getActivePublishedGraph() {
         where: { id: "active-published" },
       })) as any;
 
-      if (dbRecord && dbRecord.snapshot) {
+      if (
+        dbRecord &&
+        dbRecord.snapshot &&
+        Array.isArray((dbRecord.snapshot as any).buildings) &&
+        (dbRecord.snapshot as any).buildings.length > 0
+      ) {
         activePublishedSnapshot = {
           version: dbRecord.version,
           snapshot: dbRecord.snapshot as DraftSnapshot,
           publishedAt: dbRecord.publishedAt,
           publishedBy: dbRecord.publishedBy || "admin",
           notes: "Database published graph",
+        };
+        return activePublishedSnapshot;
+      }
+
+      // Fallback: Build graph snapshot from relational database tables if published graph snapshot is missing or empty
+      const relational = await getRelationalGraphFromDatabase();
+      if (relational && Array.isArray(relational.buildings) && relational.buildings.length > 0) {
+        activePublishedSnapshot = {
+          version: 1,
+          snapshot: relational,
+          publishedAt: new Date(),
+          publishedBy: "system",
+          notes: "Relational database fallback graph",
         };
         return activePublishedSnapshot;
       }

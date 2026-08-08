@@ -1,4 +1,4 @@
-import type { Node, Destination } from "@/shared/data/campus";
+import type { Node, Destination, Building } from "@/shared/data/campus";
 
 /**
  * Checks if a node or destination represents a staircase, lift, elevator, escalator,
@@ -56,18 +56,19 @@ export function isStairOrLiftOrUnnamed(item: {
 /**
  * Builds the list of valid user navigation start/end destinations from published graph data.
  * - Excludes all staircases, lifts, lift groups, escalators, and unnamed nodes.
- * - Includes all named nodes and explicit non-stair/non-lift destinations.
- * - Excludes generic container building items.
- * - Keyed by nodeId to avoid duplicate options for the same node.
+ * - Includes all named nodes, explicit destinations, and campus buildings.
+ * - Keyed by nodeId/id to avoid duplicate options for the same node.
  */
 export function getValidNavigationDestinations(
   publishedData: {
+    buildings?: Building[];
     nodes?: Node[];
     destinations?: Destination[];
   }
 ): Destination[] {
   const nodes = publishedData.nodes || [];
   const destinations = publishedData.destinations || [];
+  const buildings = publishedData.buildings || [];
 
   const nodeMap = new Map<string, Node>();
   nodes.forEach((n) => nodeMap.set(n.id, n));
@@ -127,6 +128,24 @@ export function getValidNavigationDestinations(
           ...(n.name!.toLowerCase().includes("gate") ? ["gate", "entrance", "main gate", "a gate"] : []),
           ...(n.name!.toLowerCase().includes("entrance") ? ["entrance", "entry", "door"] : []),
         ],
+      });
+    }
+  });
+
+  // 3. Process campus buildings as selectable navigation destinations
+  buildings.forEach((b) => {
+    if (!b.name || b.name.trim().length === 0) return;
+    const bldKey = `bld-dest-${b.id}`;
+    if (!validMap.has(b.id) && !validMap.has(bldKey)) {
+      validMap.set(bldKey, {
+        id: bldKey,
+        name: b.name.trim(),
+        category: "Building",
+        nodeId: undefined,
+        x: b.x,
+        y: b.y,
+        buildingId: b.id,
+        aliases: [b.name.trim(), b.shortCode || ""].filter(Boolean),
       });
     }
   });
