@@ -10,11 +10,22 @@ export async function GET() {
         where: { id: "active-draft" },
       });
 
+      const relationalGraph = await getRelationalGraphFromDatabase();
+
       if (draftRecord && draftRecord.snapshot) {
-        return NextResponse.json({ draft: draftRecord.snapshot });
+        const snapshot = { ...(draftRecord.snapshot as any) };
+        if (relationalGraph && relationalGraph.buildings) {
+          const snapshotBldMap = new Map((snapshot.buildings || []).map((b: any) => [b.id, b]));
+          relationalGraph.buildings.forEach((rb: any) => {
+            if (!snapshotBldMap.has(rb.id)) {
+              snapshotBldMap.set(rb.id, rb);
+            }
+          });
+          snapshot.buildings = Array.from(snapshotBldMap.values());
+        }
+        return NextResponse.json({ draft: snapshot });
       }
 
-      const relationalGraph = await getRelationalGraphFromDatabase();
       if (relationalGraph) {
         return NextResponse.json({ draft: relationalGraph });
       }
@@ -37,6 +48,40 @@ export async function PUT(req: Request) {
           update: { snapshot: snapshot as any },
           create: { id: "active-draft", snapshot: snapshot as any },
         });
+
+        if (snapshot.buildings && Array.isArray(snapshot.buildings)) {
+          const ops = snapshot.buildings.map((b: any) =>
+            prisma.building.upsert({
+              where: { id: b.id },
+              update: {
+                campusId: b.campusId || "c1",
+                name: b.name,
+                shortCode: b.shortCode || b.id,
+                color: b.color || "#4f46e5",
+                description: b.description || null,
+                x: b.x ?? null,
+                y: b.y ?? null,
+                width: b.width ?? null,
+                height: b.height ?? null,
+                status: "DRAFT",
+              },
+              create: {
+                id: b.id,
+                campusId: b.campusId || "c1",
+                name: b.name,
+                shortCode: b.shortCode || b.id,
+                color: b.color || "#4f46e5",
+                description: b.description || null,
+                x: b.x ?? null,
+                y: b.y ?? null,
+                width: b.width ?? null,
+                height: b.height ?? null,
+                status: "DRAFT",
+              },
+            })
+          );
+          await prisma.$transaction(ops);
+        }
       }
       campusStore.loadSnapshot(snapshot);
     }

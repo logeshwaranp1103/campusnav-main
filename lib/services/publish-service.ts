@@ -371,10 +371,23 @@ export async function getActivePublishedGraph() {
         where: { id: "active-published" },
       })) as any;
 
+      const relationalGraph = await getRelationalGraphFromDatabase();
+
       if (dbRecord && dbRecord.snapshot) {
+        const snapshot = { ...(dbRecord.snapshot as DraftSnapshot) };
+        if (relationalGraph && relationalGraph.buildings) {
+          const snapshotBldMap = new Map((snapshot.buildings || []).map((b) => [b.id, b]));
+          relationalGraph.buildings.forEach((rb) => {
+            if (!snapshotBldMap.has(rb.id)) {
+              snapshotBldMap.set(rb.id, rb);
+            }
+          });
+          snapshot.buildings = Array.from(snapshotBldMap.values());
+        }
+
         activePublishedSnapshot = {
           version: dbRecord.version,
-          snapshot: dbRecord.snapshot as DraftSnapshot,
+          snapshot,
           publishedAt: dbRecord.publishedAt,
           publishedBy: dbRecord.publishedBy || "admin",
           notes: "Database published graph",
@@ -382,7 +395,6 @@ export async function getActivePublishedGraph() {
         return activePublishedSnapshot;
       }
 
-      const relationalGraph = await getRelationalGraphFromDatabase();
       if (relationalGraph) {
         activePublishedSnapshot = {
           version: dbRecord?.version ?? 1,

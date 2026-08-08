@@ -5,10 +5,22 @@ import { publishDraftGraph } from "../lib/services/publish-service";
 import { getMapVersions, restoreMapVersion } from "../lib/services/version-service";
 import { campusStore } from "../shared/lib/campus-store";
 import type { Building, Floor, Node, Edge } from "../shared/data/campus";
+import { prisma } from "../lib/db";
 
 describe("Production Backend Architecture & API Services", () => {
-  beforeEach(() => {
+  const cleanupTestBuildings = async () => {
+    if (prisma) {
+      try {
+        await prisma.building.deleteMany({
+          where: { id: { in: ["b-clean", "b-new-tech"] } },
+        });
+      } catch (e) {}
+    }
+  };
+
+  beforeEach(async () => {
     campusStore.clearAllData();
+    await cleanupTestBuildings();
   });
 
   it("hashes and verifies admin passwords securely", () => {
@@ -115,5 +127,7 @@ describe("Production Backend Architecture & API Services", () => {
 
     const restored = await restoreMapVersion(versions[0].id, "admin-1");
     expect(restored.version).toBe(versions[0].version);
+
+    await cleanupTestBuildings();
   });
 });
