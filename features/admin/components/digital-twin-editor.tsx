@@ -1450,9 +1450,8 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
       } else if (draggingId.type === "building") {
         const b = liveData.buildings.find((item) => item.id === draggingId.id);
         if (b) {
-          const { lat, lng } = canvasToGps(b.x ?? 0, b.y ?? 0);
-          // Only commit GPS + history; children already moved incrementally during drag
-          campusStore.updateBuilding(b.id, { lat, lng }, true);
+          // Only commit history for visual x,y position; preserve authoritative GPS lat/lng
+          campusStore.updateBuilding(b.id, { x: b.x, y: b.y }, true);
         }
       } else if (draggingId.type === "obstacle") {
         const obs = liveData.obstacles.find((item) => item.id === draggingId.id);
@@ -4335,13 +4334,11 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
                   max={10000}
                   onChange={(w) => {
                     const clampedW = Math.max(50, w);
-                    const { lat, lng } = canvasToGps((selectedBuilding.x ?? 0) + clampedW / 2, (selectedBuilding.y ?? 0) + (selectedBuilding.height ?? 120) / 2);
-                    campusStore.updateBuilding(selectedBuilding.id, { width: clampedW, lat, lng }, false);
+                    campusStore.updateBuilding(selectedBuilding.id, { width: clampedW }, false);
                   }}
                   onCommit={(w) => {
                     const clampedW = Math.max(50, w);
-                    const { lat, lng } = canvasToGps((selectedBuilding.x ?? 0) + clampedW / 2, (selectedBuilding.y ?? 0) + (selectedBuilding.height ?? 120) / 2);
-                    campusStore.updateBuilding(selectedBuilding.id, { width: clampedW, lat, lng }, true);
+                    campusStore.updateBuilding(selectedBuilding.id, { width: clampedW }, true);
                   }}
                 />
                 <DimensionInput
@@ -4351,13 +4348,11 @@ export function DigitalTwinEditor({ initialTool = "SELECT" }: { initialTool?: To
                   max={10000}
                   onChange={(h) => {
                     const clampedH = Math.max(50, h);
-                    const { lat, lng } = canvasToGps((selectedBuilding.x ?? 0) + (selectedBuilding.width ?? 180) / 2, (selectedBuilding.y ?? 0) + clampedH / 2);
-                    campusStore.updateBuilding(selectedBuilding.id, { height: clampedH, lat, lng }, false);
+                    campusStore.updateBuilding(selectedBuilding.id, { height: clampedH }, false);
                   }}
                   onCommit={(h) => {
                     const clampedH = Math.max(50, h);
-                    const { lat, lng } = canvasToGps((selectedBuilding.x ?? 0) + (selectedBuilding.width ?? 180) / 2, (selectedBuilding.y ?? 0) + clampedH / 2);
-                    campusStore.updateBuilding(selectedBuilding.id, { height: clampedH, lat, lng }, true);
+                    campusStore.updateBuilding(selectedBuilding.id, { height: clampedH }, true);
                   }}
                 />
               </div>

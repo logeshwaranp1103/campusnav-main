@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { campusStore } from "@/shared/lib/campus-store";
-import { getRelationalGraphFromDatabase } from "@/lib/services/publish-service";
 
 export async function GET() {
   try {
@@ -10,28 +8,26 @@ export async function GET() {
         where: { id: "active-draft" },
       });
 
-      const relationalGraph = await getRelationalGraphFromDatabase();
-
       if (draftRecord && draftRecord.snapshot) {
-        const snapshot = { ...(draftRecord.snapshot as any) };
-        if (relationalGraph && relationalGraph.buildings) {
-          const snapshotBldMap = new Map((snapshot.buildings || []).map((b: any) => [b.id, b]));
-          relationalGraph.buildings.forEach((rb: any) => {
-            if (!snapshotBldMap.has(rb.id)) {
-              snapshotBldMap.set(rb.id, rb);
-            }
-          });
-          snapshot.buildings = Array.from(snapshotBldMap.values());
-        }
-        return NextResponse.json({ draft: snapshot });
-      }
-
-      if (relationalGraph) {
-        return NextResponse.json({ draft: relationalGraph });
+        return NextResponse.json({ draft: draftRecord.snapshot });
       }
     }
-    const draft = campusStore.getWorkingData();
-    return NextResponse.json({ draft });
+    // No draft in DB — return empty graph
+    return NextResponse.json({
+      draft: {
+        buildings: [],
+        floors: [],
+        nodes: [],
+        edges: [],
+        destinations: [],
+        obstacles: [],
+        events: [],
+        stairGroups: [],
+        liftGroups: [],
+        doors: [],
+        corridors: [],
+      },
+    });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
@@ -43,18 +39,45 @@ export async function PUT(req: Request) {
     const snapshot = body.snapshot || body.draft;
     if (snapshot) {
       if (prisma) {
+        // Save the full snapshot JSON
         await prisma.draftGraph.upsert({
           where: { id: "active-draft" },
           update: { snapshot: snapshot as any },
           create: { id: "active-draft", snapshot: snapshot as any },
         });
 
+        // Sync buildings to relational table: delete removed, upsert current
         if (snapshot.buildings && Array.isArray(snapshot.buildings)) {
-          const ops = snapshot.buildings.map((b: any) =>
-            prisma.building.upsert({
+          const currentBldIds = snapshot.buildings.map((b: any) => b.id);
+
+          // Delete buildings no longer in the snapshot
+          if (currentBldIds.length > 0) {
+            await prisma.building.deleteMany({
+              where: { id: { notIn: currentBldIds } },
+            });
+          }
+
+          // Upsert current buildings
+          const defaultCampusId = "c1";
+          // Ensure campus exists
+          await prisma.campus.upsert({
+            where: { id: defaultCampusId },
+            update: {},
+            create: {
+              id: defaultCampusId,
+              name: "Main Campus",
+              slug: "main",
+              latitude: 11.4965,
+              longitude: 77.2774,
+              status: "PUBLISHED",
+            },
+          });
+
+          for (const b of snapshot.buildings) {
+            await prisma.building.upsert({
               where: { id: b.id },
               update: {
-                campusId: b.campusId || "c1",
+                campusId: b.campusId || defaultCampusId,
                 name: b.name,
                 shortCode: b.shortCode || b.id,
                 color: b.color || "#4f46e5",
@@ -63,11 +86,10 @@ export async function PUT(req: Request) {
                 y: b.y ?? null,
                 width: b.width ?? null,
                 height: b.height ?? null,
-                status: "DRAFT",
               },
               create: {
                 id: b.id,
-                campusId: b.campusId || "c1",
+                campusId: b.campusId || defaultCampusId,
                 name: b.name,
                 shortCode: b.shortCode || b.id,
                 color: b.color || "#4f46e5",
@@ -76,17 +98,15 @@ export async function PUT(req: Request) {
                 y: b.y ?? null,
                 width: b.width ?? null,
                 height: b.height ?? null,
-                status: "DRAFT",
               },
-            })
-          );
-          await prisma.$transaction(ops);
+            });
+          }
         }
       }
-      campusStore.loadSnapshot(snapshot);
     }
-    return NextResponse.json({ success: true, draft: snapshot });
+    return NextResponse.json({ success: true });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 }
+

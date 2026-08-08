@@ -7,20 +7,25 @@ import { campusStore } from "../shared/lib/campus-store";
 import type { Building, Floor, Node, Edge } from "../shared/data/campus";
 import { prisma } from "../lib/db";
 
-describe("Production Backend Architecture & API Services", () => {
-  const cleanupTestBuildings = async () => {
+describe("Production Backend & API Services", () => {
+  const testBuildingIds = ["b-clean", "b-new-tech"];
+  const testFloorIds = ["f-clean-1"];
+  const testNodeIds = ["n-ent-clean", "n-stair-bad"];
+
+  const cleanupTestData = async () => {
     if (prisma) {
       try {
-        await prisma.building.deleteMany({
-          where: { id: { in: ["b-clean", "b-new-tech"] } },
-        });
+        // Clean relational rows created by tests
+        await prisma.node.deleteMany({ where: { id: { in: testNodeIds } } });
+        await prisma.floor.deleteMany({ where: { id: { in: testFloorIds } } });
+        await prisma.building.deleteMany({ where: { id: { in: testBuildingIds } } });
       } catch (e) {}
     }
   };
 
   beforeEach(async () => {
     campusStore.clearAllData();
-    await cleanupTestBuildings();
+    await cleanupTestData();
   });
 
   it("hashes and verifies admin passwords securely", () => {
@@ -128,6 +133,6 @@ describe("Production Backend Architecture & API Services", () => {
     const restored = await restoreMapVersion(versions[0].id, "admin-1");
     expect(restored.version).toBe(versions[0].version);
 
-    await cleanupTestBuildings();
+    await cleanupTestData();
   });
 });

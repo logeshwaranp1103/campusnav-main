@@ -1,17 +1,26 @@
 import { NextResponse } from "next/server";
-import { campusStore } from "@/shared/lib/campus-store";
+import { getActivePublishedGraph } from "@/lib/services/publish-service";
 
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params;
-  const publishedData = campusStore.getPublishedData();
-  const version = campusStore.getPublishedVersion();
+
+  const publishedServiceData = await getActivePublishedGraph();
+  const data = publishedServiceData?.snapshot ?? {
+    buildings: [],
+    floors: [],
+    nodes: [],
+    edges: [],
+    destinations: [],
+    obstacles: [],
+  };
 
   return NextResponse.json({
     slug,
-    version,
-    data: publishedData,
+    version: publishedServiceData?.version ?? 1,
+    data,
   });
 }
+

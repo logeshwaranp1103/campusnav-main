@@ -107,8 +107,18 @@ export async function publishDraftGraph(
         }),
       ];
 
-      // Upsert Buildings into relational DB table
+      // Delete buildings no longer in the published snapshot
       if (buildings && Array.isArray(buildings)) {
+        const publishedBldIds = buildings.map((b) => b.id);
+        if (publishedBldIds.length > 0) {
+          ops.push(
+            prisma.building.deleteMany({
+              where: { id: { notIn: publishedBldIds } },
+            })
+          );
+        }
+
+        // Upsert Buildings into relational DB table
         for (const b of buildings) {
           ops.push(
             prisma.building.upsert({
@@ -371,37 +381,13 @@ export async function getActivePublishedGraph() {
         where: { id: "active-published" },
       })) as any;
 
-      const relationalGraph = await getRelationalGraphFromDatabase();
-
       if (dbRecord && dbRecord.snapshot) {
-        const snapshot = { ...(dbRecord.snapshot as DraftSnapshot) };
-        if (relationalGraph && relationalGraph.buildings) {
-          const snapshotBldMap = new Map((snapshot.buildings || []).map((b) => [b.id, b]));
-          relationalGraph.buildings.forEach((rb) => {
-            if (!snapshotBldMap.has(rb.id)) {
-              snapshotBldMap.set(rb.id, rb);
-            }
-          });
-          snapshot.buildings = Array.from(snapshotBldMap.values());
-        }
-
         activePublishedSnapshot = {
           version: dbRecord.version,
-          snapshot,
+          snapshot: dbRecord.snapshot as DraftSnapshot,
           publishedAt: dbRecord.publishedAt,
           publishedBy: dbRecord.publishedBy || "admin",
           notes: "Database published graph",
-        };
-        return activePublishedSnapshot;
-      }
-
-      if (relationalGraph) {
-        activePublishedSnapshot = {
-          version: dbRecord?.version ?? 1,
-          snapshot: relationalGraph,
-          publishedAt: dbRecord?.publishedAt ?? new Date(),
-          publishedBy: "admin",
-          notes: "Relational database graph",
         };
         return activePublishedSnapshot;
       }

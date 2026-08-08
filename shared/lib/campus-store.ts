@@ -2160,36 +2160,50 @@ class CampusStore {
     if (typeof window === "undefined") return;
     try {
       // 1. Sync working draft graph from server PostgreSQL database
+      // Server DB is the single source of truth — REPLACE local state entirely
       const resDraft = await fetch("/api/admin/campus-graph/draft", { cache: "no-store" });
       if (resDraft.ok) {
         const jsonDraft = await resDraft.json();
         const draft = jsonDraft?.draft;
         if (draft && Array.isArray(draft.buildings) && draft.buildings.length > 0) {
-          const bldMap = new Map(this.buildings.map((b) => [b.id, b]));
-          draft.buildings.forEach((b: Building) => bldMap.set(b.id, b));
-          this.buildings = Array.from(bldMap.values());
-
-          if (draft.floors && draft.floors.length > 0) {
-            const flMap = new Map(this.floors.map((f) => [f.id, f]));
-            draft.floors.forEach((f: Floor) => flMap.set(f.id, f));
-            this.floors = Array.from(flMap.values());
+          // Replace entire working state with server state
+          this.buildings = draft.buildings || [];
+          this.floors = draft.floors || [];
+          this.nodes = draft.nodes || [];
+          this.edges = draft.edges || [];
+          this.destinations = draft.destinations || [];
+          this.events = draft.events || [];
+          this.obstacles = draft.obstacles || [];
+          this.stairGroups = draft.stairGroups || [];
+          this.liftGroups = draft.liftGroups || [];
+          this.doors = draft.doors || [];
+          this.corridors = draft.corridors || [];
+          this.ensureDefaultGroundFloors();
+          this.syncVerticalGroupPositions();
+          (this.stairGroups || []).forEach((sg) => this.rebuildStairGroupConnections(sg));
+          this.autoConnectMatchingVerticalNodesAcrossFloors();
+          // Persist to localStorage so next page load starts with server data
+          if (typeof window !== "undefined") {
+            try {
+              const working = {
+                buildings: this.buildings,
+                floors: this.floors,
+                nodes: this.nodes,
+                edges: this.edges,
+                destinations: this.destinations,
+                events: this.events,
+                obstacles: this.obstacles,
+                stairGroups: this.stairGroups,
+                liftGroups: this.liftGroups,
+                doors: this.doors,
+                corridors: this.corridors,
+                pendingChanges: this.pendingChanges,
+              };
+              localStorage.setItem("campusnav_working_store_v2", JSON.stringify(working));
+            } catch (e) {
+              // localStorage save failed
+            }
           }
-          if (draft.nodes && draft.nodes.length > 0) {
-            const nMap = new Map(this.nodes.map((n) => [n.id, n]));
-            draft.nodes.forEach((n: Node) => nMap.set(n.id, n));
-            this.nodes = Array.from(nMap.values());
-          }
-          if (draft.edges && draft.edges.length > 0) {
-            const eMap = new Map(this.edges.map((e) => [e.id, e]));
-            draft.edges.forEach((e: Edge) => eMap.set(e.id, e));
-            this.edges = Array.from(eMap.values());
-          }
-          if (draft.destinations && draft.destinations.length > 0) {
-            const dMap = new Map(this.destinations.map((d) => [d.id, d]));
-            draft.destinations.forEach((d: Destination) => dMap.set(d.id, d));
-            this.destinations = Array.from(dMap.values());
-          }
-          this.saveToLocalStorage();
           this.notify();
         }
       }
@@ -2199,21 +2213,28 @@ class CampusStore {
       if (resPub.ok) {
         const jsonPub = await resPub.json();
         const graph = jsonPub?.graph;
-        if (graph && Array.isArray(graph.buildings) && graph.buildings.length > 0) {
-          const bldMap = new Map((this.publishedGraph.buildings || []).map((b) => [b.id, b]));
-          graph.buildings.forEach((b: Building) => bldMap.set(b.id, b));
+        if (graph && Array.isArray(graph.buildings)) {
+          // Replace entire published state with server state
           this.publishedGraph = {
-            ...this.publishedGraph,
-            buildings: Array.from(bldMap.values()),
-            floors: graph.floors && graph.floors.length > 0 ? graph.floors : this.publishedGraph.floors,
-            nodes: graph.nodes && graph.nodes.length > 0 ? graph.nodes : this.publishedGraph.nodes,
-            edges: graph.edges && graph.edges.length > 0 ? graph.edges : this.publishedGraph.edges,
-            destinations: graph.destinations && graph.destinations.length > 0 ? graph.destinations : this.publishedGraph.destinations,
+            buildings: graph.buildings || [],
+            floors: graph.floors || [],
+            nodes: graph.nodes || [],
+            edges: graph.edges || [],
+            destinations: graph.destinations || [],
+            events: graph.events || [],
+            obstacles: graph.obstacles || [],
+            stairGroups: graph.stairGroups || [],
+            liftGroups: graph.liftGroups || [],
+            doors: graph.doors || [],
+            corridors: graph.corridors || [],
           };
-          if (this.buildings.length === 0) {
-            this.buildings = JSON.parse(JSON.stringify(this.publishedGraph.buildings));
+          if (typeof window !== "undefined") {
+            try {
+              localStorage.setItem("campusnav_published_store_v2", JSON.stringify(this.publishedGraph));
+            } catch (e) {
+              // localStorage save failed
+            }
           }
-          this.saveToLocalStorage();
           this.notify();
         }
       }

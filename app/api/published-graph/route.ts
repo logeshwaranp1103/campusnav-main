@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
-import { campusStore } from "@/shared/lib/campus-store";
 import { getActivePublishedGraph, publishDraftGraph } from "@/lib/services/publish-service";
 
 export async function GET() {
   const publishedServiceData = await getActivePublishedGraph();
-  const publishedStoreData = campusStore.getPublishedData();
 
-  const data = publishedServiceData?.snapshot ?? publishedStoreData;
+  const data = publishedServiceData?.snapshot ?? {
+    buildings: [],
+    floors: [],
+    nodes: [],
+    edges: [],
+    destinations: [],
+    obstacles: [],
+  };
 
   return NextResponse.json(
     {
@@ -25,7 +30,7 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
-    const snapshot = body.snapshot || campusStore.getWorkingData();
+    const snapshot = body.snapshot;
 
     const result = await publishDraftGraph(snapshot, "admin-user", body.notes);
 
