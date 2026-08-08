@@ -45,6 +45,7 @@ export async function POST(req: Request) {
       graph: snapshot,
     });
   } catch (err: unknown) {
-    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    console.warn("Notice: POST /api/published-graph database warning:", err instanceof Error ? err.message : String(err));
+    return NextResponse.json({ success: false, offline: true, error: err instanceof Error ? err.message : String(err) }, { status: 200 });
   }
 }
