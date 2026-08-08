@@ -1,7 +1,7 @@
 import { prisma } from "../db";
 import { validateCampusGraph, type GraphValidationReport } from "../validation/graph-validator";
 import { logAuditEvent } from "./audit-service";
-import type { Building, Floor, Node, Edge, Destination, Obstacle } from "../../shared/data/campus";
+import { getFloorCode, type Building, type Floor, type Node, type Edge, type Destination, type Obstacle } from "../../shared/data/campus";
 
 export interface PublishResult {
   success: boolean;
@@ -98,16 +98,113 @@ export async function publishDraftGraph(
   };
 }
 
+export async function getRelationalGraphFromDatabase(): Promise<DraftSnapshot | null> {
+  if (!prisma) return null;
+  try {
+    const [rawBuildings, rawFloors, rawNodes, rawEdges, rawDestinations] = await Promise.all([
+      prisma.building.findMany(),
+      prisma.floor.findMany(),
+      prisma.node.findMany(),
+      prisma.edge.findMany(),
+      prisma.destination.findMany(),
+    ]);
+
+    if (rawNodes.length === 0 && rawBuildings.length === 0) {
+      return null;
+    }
+
+    const buildings: Building[] = rawBuildings.map((b) => ({
+      id: b.id,
+      campusId: b.campusId,
+      name: b.name,
+      shortCode: b.shortCode ?? undefined,
+      color: b.color ?? undefined,
+      x: b.x ?? undefined,
+      y: b.y ?? undefined,
+      width: b.width ?? undefined,
+      height: b.height ?? undefined,
+    }));
+
+    const floors: Floor[] = rawFloors.map((f) => ({
+      id: f.id,
+      buildingId: f.buildingId,
+      name: f.name,
+      ordinal: f.ordinal,
+      code: getFloorCode(f.ordinal, f.name),
+    }));
+
+    const nodes: Node[] = rawNodes.map((n) => ({
+      id: n.id,
+      type: n.type as any,
+      name: n.name ?? undefined,
+      floorId: n.floorId ?? "",
+      x: n.x ?? 0,
+      y: n.y ?? 0,
+      lat: n.latitude ?? undefined,
+      lng: n.longitude ?? undefined,
+      searchable: n.searchable ?? true,
+    }));
+
+    const edges: Edge[] = rawEdges.map((e) => ({
+      id: e.id,
+      from: e.fromNodeId,
+      to: e.toNodeId,
+      fromNodeId: e.fromNodeId,
+      toNodeId: e.toNodeId,
+      type: e.type as any,
+      distance: e.distance,
+      bidirectional: e.bidirectional ?? true,
+    }));
+
+    const destinations: Destination[] = rawDestinations.map((d) => ({
+      id: d.id,
+      nodeId: d.nodeId,
+      name: d.name,
+      category: d.category ?? "Custom",
+      aliases: [],
+    }));
+
+    return {
+      buildings,
+      floors,
+      nodes,
+      edges,
+      destinations,
+      obstacles: [],
+    };
+  } catch (e) {
+    console.warn("Error building graph snapshot from relational database:", e);
+    return null;
+  }
+}
+
 export async function getActivePublishedGraph() {
   if (prisma) {
     try {
-      const dbRecord = (await prisma.publishedGraph.findUnique({
-        where: { id: "active-published" },
-      })) as any;
-      if (dbRecord && dbRecord.snapshot) {
+      const [dbRecord, relationalGraph] = await Promise.all([
+        prisma.publishedGraph.findUnique({ where: { id: "active-published" } }).catch(() => null as any),
+        getRelationalGraphFromDatabase().catch(() => null),
+      ]);
+
+      const snapshot = dbRecord?.snapshot as DraftSnapshot | undefined;
+      const snapshotNodeCount = snapshot?.nodes?.length ?? 0;
+      const relationalNodeCount = relationalGraph?.nodes?.length ?? 0;
+
+      if (relationalGraph && relationalNodeCount > snapshotNodeCount) {
+        activePublishedSnapshot = {
+          version: dbRecord?.version ?? 1,
+          snapshot: relationalGraph,
+          publishedAt: dbRecord?.publishedAt ?? new Date(),
+          publishedBy: "admin",
+          notes: "Relational database graph",
+        };
+        return activePublishedSnapshot;
+      }
+
+      if (snapshot && snapshotNodeCount > 0) {
         activePublishedSnapshot = {
           version: dbRecord.version,
-          snapshot: dbRecord.snapshot as DraftSnapshot,
+          snapshot,
           publishedAt: dbRecord.publishedAt,
           publishedBy: dbRecord.publishedBy || "admin",
           notes: "Database published graph",

@@ -2147,7 +2147,7 @@ class CampusStore {
       if (resPub.ok) {
         const jsonPub = await resPub.json();
         const graph = jsonPub?.graph;
-        if (graph && Array.isArray(graph.buildings) && (graph.buildings.length > 0 || graph.nodes?.length > 0)) {
+        if (graph && Array.isArray(graph.buildings) && (graph.buildings.length > 0 || (graph.nodes && graph.nodes.length > 0))) {
           this.publishedGraph = {
             buildings: graph.buildings || [],
             floors: graph.floors || [],
@@ -2161,7 +2161,7 @@ class CampusStore {
             doors: graph.doors || [],
             corridors: graph.corridors || [],
           };
-          if (this.buildings.length === 0 && this.nodes.length === 0) {
+          if (this.nodes.length <= (graph.nodes?.length || 0)) {
             this.buildings = JSON.parse(JSON.stringify(this.publishedGraph.buildings));
             this.floors = JSON.parse(JSON.stringify(this.publishedGraph.floors));
             this.nodes = JSON.parse(JSON.stringify(this.publishedGraph.nodes));
@@ -2183,9 +2183,11 @@ class CampusStore {
       if (resDraft.ok) {
         const jsonDraft = await resDraft.json();
         const draft = jsonDraft?.draft;
-        if (draft && Array.isArray(draft.buildings) && (draft.buildings.length > 0 || draft.nodes?.length > 0)) {
-          this.loadSnapshot(draft);
-          this.notify();
+        if (draft && Array.isArray(draft.buildings) && (draft.buildings.length > 0 || (draft.nodes && draft.nodes.length > 0))) {
+          if (this.nodes.length <= (draft.nodes?.length || 0)) {
+            this.loadSnapshot(draft);
+            this.notify();
+          }
         }
       }
     } catch (e) {

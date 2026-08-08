@@ -1,15 +1,30 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { campusStore } from "@/shared/lib/campus-store";
+import { getRelationalGraphFromDatabase } from "@/lib/services/publish-service";
 
 export async function GET() {
   try {
     if (prisma) {
-      const draftRecord = await prisma.draftGraph.findUnique({
-        where: { id: "active-draft" },
-      });
-      if (draftRecord && draftRecord.snapshot) {
-        return NextResponse.json({ draft: draftRecord.snapshot });
+      const [draftRecord, relationalGraph] = await Promise.all([
+        prisma.draftGraph.findUnique({ where: { id: "active-draft" } }).catch(() => null),
+        getRelationalGraphFromDatabase().catch(() => null),
+      ]);
+
+      const snapshot = draftRecord?.snapshot as any;
+      const snapshotNodeCount = snapshot?.nodes?.length ?? 0;
+      const relationalNodeCount = relationalGraph?.nodes?.length ?? 0;
+
+      if (relationalGraph && relationalNodeCount > snapshotNodeCount) {
+        return NextResponse.json({ draft: relationalGraph });
+      }
+
+      if (snapshot && snapshotNodeCount > 0) {
+        return NextResponse.json({ draft: snapshot });
+      }
+
+      if (relationalGraph) {
+        return NextResponse.json({ draft: relationalGraph });
       }
     }
     const draft = campusStore.getWorkingData();
