@@ -2147,7 +2147,7 @@ class CampusStore {
       if (resPub.ok) {
         const jsonPub = await resPub.json();
         const graph = jsonPub?.graph;
-        if (graph && Array.isArray(graph.buildings) && (graph.buildings.length > 0 || (graph.nodes && graph.nodes.length > 0))) {
+        if (graph && Array.isArray(graph.buildings)) {
           this.publishedGraph = {
             buildings: graph.buildings || [],
             floors: graph.floors || [],
@@ -2161,18 +2161,10 @@ class CampusStore {
             doors: graph.doors || [],
             corridors: graph.corridors || [],
           };
-          if (this.nodes.length <= (graph.nodes?.length || 0)) {
-            this.buildings = JSON.parse(JSON.stringify(this.publishedGraph.buildings));
-            this.floors = JSON.parse(JSON.stringify(this.publishedGraph.floors));
-            this.nodes = JSON.parse(JSON.stringify(this.publishedGraph.nodes));
-            this.edges = JSON.parse(JSON.stringify(this.publishedGraph.edges));
-            this.destinations = JSON.parse(JSON.stringify(this.publishedGraph.destinations));
-            this.events = JSON.parse(JSON.stringify(this.publishedGraph.events));
-            this.obstacles = JSON.parse(JSON.stringify(this.publishedGraph.obstacles));
-            this.stairGroups = JSON.parse(JSON.stringify(this.publishedGraph.stairGroups || []));
-            this.liftGroups = JSON.parse(JSON.stringify(this.publishedGraph.liftGroups || []));
-            this.doors = JSON.parse(JSON.stringify(this.publishedGraph.doors || []));
-            this.corridors = JSON.parse(JSON.stringify(this.publishedGraph.corridors || []));
+          if (jsonPub.version && jsonPub.version > 1) {
+            this.loadSnapshot(this.publishedGraph);
+          } else if (graph.buildings.length > 0 || (graph.nodes && graph.nodes.length > 0)) {
+            this.loadSnapshot(this.publishedGraph);
           }
           this.notify();
         }
@@ -2183,11 +2175,9 @@ class CampusStore {
       if (resDraft.ok) {
         const jsonDraft = await resDraft.json();
         const draft = jsonDraft?.draft;
-        if (draft && Array.isArray(draft.buildings) && (draft.buildings.length > 0 || (draft.nodes && draft.nodes.length > 0))) {
-          if (this.nodes.length <= (draft.nodes?.length || 0)) {
-            this.loadSnapshot(draft);
-            this.notify();
-          }
+        if (draft && Array.isArray(draft.buildings)) {
+          this.loadSnapshot(draft);
+          this.notify();
         }
       }
     } catch (e) {

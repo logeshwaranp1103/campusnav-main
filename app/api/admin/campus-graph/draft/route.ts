@@ -6,23 +6,15 @@ import { getRelationalGraphFromDatabase } from "@/lib/services/publish-service";
 export async function GET() {
   try {
     if (prisma) {
-      const [draftRecord, relationalGraph] = await Promise.all([
-        prisma.draftGraph.findUnique({ where: { id: "active-draft" } }).catch(() => null),
-        getRelationalGraphFromDatabase().catch(() => null),
-      ]);
+      const draftRecord = await prisma.draftGraph.findUnique({
+        where: { id: "active-draft" },
+      });
 
-      const snapshot = draftRecord?.snapshot as any;
-      const snapshotNodeCount = snapshot?.nodes?.length ?? 0;
-      const relationalNodeCount = relationalGraph?.nodes?.length ?? 0;
-
-      if (relationalGraph && relationalNodeCount > snapshotNodeCount) {
-        return NextResponse.json({ draft: relationalGraph });
+      if (draftRecord && draftRecord.snapshot) {
+        return NextResponse.json({ draft: draftRecord.snapshot });
       }
 
-      if (snapshot && snapshotNodeCount > 0) {
-        return NextResponse.json({ draft: snapshot });
-      }
-
+      const relationalGraph = await getRelationalGraphFromDatabase();
       if (relationalGraph) {
         return NextResponse.json({ draft: relationalGraph });
       }

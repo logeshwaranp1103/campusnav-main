@@ -61,22 +61,41 @@ export async function publishDraftGraph(
 
   if (prisma) {
     try {
-      await prisma.publishedGraph.upsert({
-        where: { id: "active-published" },
-        update: {
-          version: versionNum,
-          snapshot: draftSnapshot as any,
-          publishedAt,
-          publishedBy: userId,
-        },
-        create: {
-          id: "active-published",
-          version: versionNum,
-          snapshot: draftSnapshot as any,
-          publishedAt,
-          publishedBy: userId,
-        },
-      });
+      const ops: any[] = [
+        prisma.publishedGraph.upsert({
+          where: { id: "active-published" },
+          update: {
+            version: versionNum,
+            snapshot: draftSnapshot as any,
+            publishedAt,
+            publishedBy: userId,
+          },
+          create: {
+            id: "active-published",
+            version: versionNum,
+            snapshot: draftSnapshot as any,
+            publishedAt,
+            publishedBy: userId,
+          },
+        }),
+        prisma.draftGraph.upsert({
+          where: { id: "active-draft" },
+          update: { snapshot: draftSnapshot as any },
+          create: { id: "active-draft", snapshot: draftSnapshot as any },
+        }),
+      ];
+
+      if (!nodes || nodes.length === 0) {
+        ops.push(
+          prisma.edge.deleteMany(),
+          prisma.node.deleteMany(),
+          prisma.destination.deleteMany(),
+          prisma.floor.deleteMany(),
+          prisma.building.deleteMany()
+        );
+      }
+
+      await prisma.$transaction(ops);
     } catch (e) {
       console.warn("Failed to persist published graph to Prisma database:", e);
     }
@@ -181,33 +200,29 @@ export async function getRelationalGraphFromDatabase(): Promise<DraftSnapshot | 
 export async function getActivePublishedGraph() {
   if (prisma) {
     try {
-      const [dbRecord, relationalGraph] = await Promise.all([
-        prisma.publishedGraph.findUnique({ where: { id: "active-published" } }).catch(() => null as any),
-        getRelationalGraphFromDatabase().catch(() => null),
-      ]);
+      const dbRecord = (await prisma.publishedGraph.findUnique({
+        where: { id: "active-published" },
+      })) as any;
 
-      const snapshot = dbRecord?.snapshot as DraftSnapshot | undefined;
-      const snapshotNodeCount = snapshot?.nodes?.length ?? 0;
-      const relationalNodeCount = relationalGraph?.nodes?.length ?? 0;
+      if (dbRecord && dbRecord.snapshot) {
+        activePublishedSnapshot = {
+          version: dbRecord.version,
+          snapshot: dbRecord.snapshot as DraftSnapshot,
+          publishedAt: dbRecord.publishedAt,
+          publishedBy: dbRecord.publishedBy || "admin",
+          notes: "Database published graph",
+        };
+        return activePublishedSnapshot;
+      }
 
-      if (relationalGraph && relationalNodeCount > snapshotNodeCount) {
+      const relationalGraph = await getRelationalGraphFromDatabase();
+      if (relationalGraph) {
         activePublishedSnapshot = {
           version: dbRecord?.version ?? 1,
           snapshot: relationalGraph,
           publishedAt: dbRecord?.publishedAt ?? new Date(),
           publishedBy: "admin",
           notes: "Relational database graph",
-        };
-        return activePublishedSnapshot;
-      }
-
-      if (snapshot && snapshotNodeCount > 0) {
-        activePublishedSnapshot = {
-          version: dbRecord.version,
-          snapshot,
-          publishedAt: dbRecord.publishedAt,
-          publishedBy: dbRecord.publishedBy || "admin",
-          notes: "Database published graph",
         };
         return activePublishedSnapshot;
       }
