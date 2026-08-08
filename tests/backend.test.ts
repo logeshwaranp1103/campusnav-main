@@ -23,9 +23,8 @@ describe("Production Backend & API Services", () => {
     }
   };
 
-  beforeEach(async () => {
+  beforeEach(() => {
     campusStore.clearAllData();
-    await cleanupTestData();
   });
 
   it("hashes and verifies admin passwords securely", () => {

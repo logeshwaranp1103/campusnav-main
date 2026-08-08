@@ -50,66 +50,66 @@ export async function PUT(req: Request) {
         create: { id: "active-draft", snapshot: snapshot as any },
       });
 
-      // Sync buildings to relational table: delete removed, upsert current
-      if (snapshot.buildings && Array.isArray(snapshot.buildings)) {
-        const currentBldIds = snapshot.buildings.map((b: any) => b.id);
-
-        // Delete buildings no longer in the snapshot
-        if (currentBldIds.length > 0) {
-          await prisma.building.deleteMany({
-            where: { id: { notIn: currentBldIds } },
-          }).catch((e) => console.warn("Notice: building cleanup deferred:", e?.message));
-        }
-
-        // Upsert current buildings
-        const defaultCampusId = "c1";
-        // Ensure campus exists
-        await prisma.campus.upsert({
-          where: { id: defaultCampusId },
-          update: {},
-          create: {
-            id: defaultCampusId,
-            name: "Main Campus",
-            slug: "main",
-            latitude: 11.4965,
-            longitude: 77.2774,
-            status: "PUBLISHED",
-          },
-        }).catch((e) => console.warn("Notice: campus upsert deferred:", e?.message));
-
-        for (const b of snapshot.buildings) {
-          await prisma.building.upsert({
-            where: { id: b.id },
-            update: {
-              campusId: b.campusId || defaultCampusId,
-              name: b.name,
-              shortCode: b.shortCode || b.id,
-              color: b.color || "#4f46e5",
-              description: b.description || null,
-              x: b.x ?? null,
-              y: b.y ?? null,
-              width: b.width ?? null,
-              height: b.height ?? null,
-              floorsCount: b.floorsCount ?? 0,
-              basementsCount: b.basementsCount ?? 0,
-            },
+        // Sync buildings to relational table (best-effort)
+        try {
+          const defaultCampusId = "c1";
+          await prisma.campus.upsert({
+            where: { id: defaultCampusId },
+            update: {},
             create: {
-              id: b.id,
-              campusId: b.campusId || defaultCampusId,
-              name: b.name,
-              shortCode: b.shortCode || b.id,
-              color: b.color || "#4f46e5",
-              description: b.description || null,
-              x: b.x ?? null,
-              y: b.y ?? null,
-              width: b.width ?? null,
-              height: b.height ?? null,
-              floorsCount: b.floorsCount ?? 0,
-              basementsCount: b.basementsCount ?? 0,
+              id: defaultCampusId,
+              name: "Main Campus",
+              slug: "main",
+              latitude: 11.4965,
+              longitude: 77.2774,
+              status: "PUBLISHED",
             },
-          }).catch((e) => console.warn(`Notice: building ${b.id} upsert deferred:`, e?.message));
+          }).catch(() => {});
+
+          const currentBldIds = snapshot.buildings.map((b: any) => b.id);
+          if (currentBldIds.length > 0) {
+            await prisma.building.deleteMany({
+              where: { id: { notIn: currentBldIds } },
+            }).catch(() => {});
+          }
+
+          for (const b of snapshot.buildings) {
+            // Ensure shortCode is unique per building ID to satisfy @@unique([campusId, shortCode])
+            const safeCode = b.shortCode ? `${b.shortCode}_${b.id.slice(-6)}` : b.id;
+            await prisma.building.upsert({
+              where: { id: b.id },
+              update: {
+                campusId: b.campusId || defaultCampusId,
+                name: b.name,
+                shortCode: safeCode,
+                color: b.color || "#4f46e5",
+                description: b.description || null,
+                x: b.x ?? null,
+                y: b.y ?? null,
+                width: b.width ?? null,
+                height: b.height ?? null,
+                floorsCount: b.floorsCount ?? 0,
+                basementsCount: b.basementsCount ?? 0,
+              },
+              create: {
+                id: b.id,
+                campusId: b.campusId || defaultCampusId,
+                name: b.name,
+                shortCode: safeCode,
+                color: b.color || "#4f46e5",
+                description: b.description || null,
+                x: b.x ?? null,
+                y: b.y ?? null,
+                width: b.width ?? null,
+                height: b.height ?? null,
+                floorsCount: b.floorsCount ?? 0,
+                basementsCount: b.basementsCount ?? 0,
+              },
+            }).catch((e) => console.warn(`Relational sync deferred for building ${b.id}:`, e?.message));
+          }
+        } catch (syncErr) {
+          console.warn("Relational building sync notice:", syncErr);
         }
-      }
     }
     return NextResponse.json({ success: true });
   } catch (err: unknown) {

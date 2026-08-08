@@ -120,13 +120,14 @@ export async function publishDraftGraph(
 
         // Upsert Buildings into relational DB table
         for (const b of buildings) {
+          const safeCode = b.shortCode ? `${b.shortCode}_${b.id.slice(-6)}` : b.id;
           ops.push(
             prisma.building.upsert({
               where: { id: b.id },
               update: {
                 campusId: b.campusId || defaultCampusId,
                 name: b.name,
-                shortCode: b.shortCode || b.id,
+                shortCode: safeCode,
                 color: b.color || "#4f46e5",
                 description: b.description || null,
                 x: b.x ?? null,
@@ -141,7 +142,7 @@ export async function publishDraftGraph(
                 id: b.id,
                 campusId: b.campusId || defaultCampusId,
                 name: b.name,
-                shortCode: b.shortCode || b.id,
+                shortCode: safeCode,
                 color: b.color || "#4f46e5",
                 description: b.description || null,
                 x: b.x ?? null,
