@@ -29,7 +29,7 @@ export async function POST(req: Request) {
       name: body.name,
       shortCode: body.shortCode,
       color: body.color || "#4f46e5",
-      floorsCount: body.floorsCount || 3,
+      floorsCount: typeof body.floorsCount === "number" ? body.floorsCount : 0,
       lat: body.lat || 11.4965,
       lng: body.lng || 77.2774,
     });

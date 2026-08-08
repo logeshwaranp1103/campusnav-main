@@ -86,6 +86,8 @@ export async function PUT(req: Request) {
                 y: b.y ?? null,
                 width: b.width ?? null,
                 height: b.height ?? null,
+                floorsCount: b.floorsCount ?? 0,
+                basementsCount: b.basementsCount ?? 0,
               },
               create: {
                 id: b.id,
@@ -98,6 +100,8 @@ export async function PUT(req: Request) {
                 y: b.y ?? null,
                 width: b.width ?? null,
                 height: b.height ?? null,
+                floorsCount: b.floorsCount ?? 0,
+                basementsCount: b.basementsCount ?? 0,
               },
             });
           }

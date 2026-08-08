@@ -142,6 +142,8 @@ model Building {
   width       Float?
   height      Float?
   rotation    Float?    @default(0)
+  floorsCount Int?      @default(0)
+  basementsCount Int?   @default(0)
   status      MapStatus @default(DRAFT)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

@@ -133,6 +133,8 @@ export async function publishDraftGraph(
                 y: b.y ?? null,
                 width: b.width ?? null,
                 height: b.height ?? null,
+                floorsCount: b.floorsCount ?? 0,
+                basementsCount: b.basementsCount ?? 0,
                 status: "PUBLISHED",
               },
               create: {
@@ -146,6 +148,8 @@ export async function publishDraftGraph(
                 y: b.y ?? null,
                 width: b.width ?? null,
                 height: b.height ?? null,
+                floorsCount: b.floorsCount ?? 0,
+                basementsCount: b.basementsCount ?? 0,
                 status: "PUBLISHED",
               },
             })
@@ -319,6 +323,8 @@ export async function getRelationalGraphFromDatabase(): Promise<DraftSnapshot | 
       y: b.y ?? undefined,
       width: b.width ?? undefined,
       height: b.height ?? undefined,
+      floorsCount: b.floorsCount ?? 0,
+      basementsCount: b.basementsCount ?? 0,
     }));
 
     const floors: Floor[] = rawFloors.map((f) => ({

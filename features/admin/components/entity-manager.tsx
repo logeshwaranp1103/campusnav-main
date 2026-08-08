@@ -94,7 +94,7 @@ export function EntityManager() {
     roomNumber: "",
     nodeType: "CORRIDOR" as NodeType,
     description: "",
-    floorsCount: 1,
+    floorsCount: 0,
     ordinal: 0,
     selectedFloorIds: [] as string[],
     severity: "MEDIUM" as "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
@@ -422,7 +422,7 @@ export function EntityManager() {
           name: buildingForm.name.trim(),
           shortCode: buildingForm.category.toUpperCase().slice(0, 4),
           description: buildingForm.description,
-          floorsCount: Number(buildingForm.floorsCount) || 1,
+          floorsCount: typeof buildingForm.floorsCount === "number" && !isNaN(buildingForm.floorsCount) ? Math.max(0, buildingForm.floorsCount) : 0,
           lat: centerLat,
           lng: centerLng,
           x,
@@ -659,7 +659,7 @@ export function EntityManager() {
       roomNumber: item.raw.roomNumber || "",
       nodeType: item.raw.type || "CORRIDOR",
       description: item.raw.description || "",
-      floorsCount: item.raw.floorsCount || 1,
+      floorsCount: item.raw.floorsCount !== undefined ? item.raw.floorsCount : 0,
       ordinal: item.raw.ordinal !== undefined ? item.raw.ordinal : 0,
       selectedFloorIds: item.raw.connectedFloorIds || item.raw.servedFloorIds || [],
       severity: item.raw.severity || "MEDIUM",
@@ -763,7 +763,7 @@ export function EntityManager() {
             id: b.id,
             name: b.name,
             category: "BUILDING",
-            details: `${b.floorsCount || 1} Floors · GPS: ${b.lat?.toFixed(4)}, ${b.lng?.toFixed(4)}`,
+            details: `${(b.floorsCount ?? 0) === 0 ? "Ground Floor Only" : `${(b.floorsCount ?? 0) + 1} Floors (${b.floorsCount} Upper)`} · GPS: ${b.lat?.toFixed(4)}, ${b.lng?.toFixed(4)}`,
             raw: b,
           });
         }
@@ -1162,13 +1162,16 @@ export function EntityManager() {
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-[rgb(var(--fg))]">Number of Floors</label>
+                    <label className="text-xs font-bold text-[rgb(var(--fg))]">Number of Upper Floors (0 = Ground Floor only)</label>
                     <Input
                       type="number"
-                      min={1}
-                      max={20}
+                      min={0}
+                      max={100}
                       value={buildingForm.floorsCount}
-                      onChange={(e) => setBuildingForm({ ...buildingForm, floorsCount: parseInt(e.target.value) || 1 })}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value);
+                        setBuildingForm({ ...buildingForm, floorsCount: isNaN(val) ? 0 : Math.max(0, val) });
+                      }}
                       className="mt-1.5"
                     />
                   </div>
@@ -2207,6 +2210,23 @@ export function EntityManager() {
                       <option value="Washroom">Washroom</option>
                     </select>
                   </div>
+                </div>
+              )}
+
+              {editingItem.category === "BUILDING" && (
+                <div>
+                  <label className="font-bold text-[rgb(var(--fg))]">Number of Upper Floors (0 = Ground Floor only)</label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={editForm.floorsCount}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value);
+                      setEditForm({ ...editForm, floorsCount: isNaN(val) ? 0 : Math.max(0, val) });
+                    }}
+                    className="mt-1 text-xs"
+                  />
                 </div>
               )}
 
