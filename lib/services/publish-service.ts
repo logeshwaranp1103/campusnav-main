@@ -61,7 +61,20 @@ export async function publishDraftGraph(
 
   if (prisma) {
     try {
+      const defaultCampusId = "c1";
       const ops: any[] = [
+        prisma.campus.upsert({
+          where: { id: defaultCampusId },
+          update: {},
+          create: {
+            id: defaultCampusId,
+            name: "Main Campus",
+            slug: "main",
+            latitude: 11.4965,
+            longitude: 77.2774,
+            status: "PUBLISHED",
+          },
+        }),
         prisma.publishedGraph.upsert({
           where: { id: "active-published" },
           update: {
@@ -83,16 +96,170 @@ export async function publishDraftGraph(
           update: { snapshot: draftSnapshot as any },
           create: { id: "active-draft", snapshot: draftSnapshot as any },
         }),
+        prisma.mapVersion.create({
+          data: {
+            version: versionNum,
+            status: "PUBLISHED",
+            snapshot: draftSnapshot as any,
+            notes: notes || "Published campus graph update",
+            publishedBy: userId,
+          },
+        }),
       ];
 
-      if (!nodes || nodes.length === 0) {
-        ops.push(
-          prisma.edge.deleteMany(),
-          prisma.node.deleteMany(),
-          prisma.destination.deleteMany(),
-          prisma.floor.deleteMany(),
-          prisma.building.deleteMany()
-        );
+      // Upsert Buildings into relational DB table
+      if (buildings && Array.isArray(buildings)) {
+        for (const b of buildings) {
+          ops.push(
+            prisma.building.upsert({
+              where: { id: b.id },
+              update: {
+                campusId: b.campusId || defaultCampusId,
+                name: b.name,
+                shortCode: b.shortCode || b.id,
+                color: b.color || "#4f46e5",
+                description: b.description || null,
+                x: b.x ?? null,
+                y: b.y ?? null,
+                width: b.width ?? null,
+                height: b.height ?? null,
+                status: "PUBLISHED",
+              },
+              create: {
+                id: b.id,
+                campusId: b.campusId || defaultCampusId,
+                name: b.name,
+                shortCode: b.shortCode || b.id,
+                color: b.color || "#4f46e5",
+                description: b.description || null,
+                x: b.x ?? null,
+                y: b.y ?? null,
+                width: b.width ?? null,
+                height: b.height ?? null,
+                status: "PUBLISHED",
+              },
+            })
+          );
+        }
+      }
+
+      // Upsert Floors into relational DB table
+      if (floors && Array.isArray(floors)) {
+        const validBuildingIds = new Set((buildings || []).map((b) => b.id));
+        for (const f of floors) {
+          if (validBuildingIds.has(f.buildingId)) {
+            ops.push(
+              prisma.floor.upsert({
+                where: { id: f.id },
+                update: {
+                  buildingId: f.buildingId,
+                  name: f.name,
+                  ordinal: f.ordinal ?? 0,
+                },
+                create: {
+                  id: f.id,
+                  buildingId: f.buildingId,
+                  name: f.name,
+                  ordinal: f.ordinal ?? 0,
+                },
+              })
+            );
+          }
+        }
+      }
+
+      // Upsert Nodes into relational DB table
+      if (nodes && Array.isArray(nodes)) {
+        const validFloorIds = new Set((floors || []).map((f) => f.id));
+        for (const n of nodes) {
+          const floorId = n.floorId && validFloorIds.has(n.floorId) ? n.floorId : null;
+          ops.push(
+            prisma.node.upsert({
+              where: { id: n.id },
+              update: {
+                campusId: n.campusId || defaultCampusId,
+                floorId,
+                type: n.type as any,
+                name: n.name || null,
+                latitude: n.lat ?? null,
+                longitude: n.lng ?? null,
+                x: n.x ?? null,
+                y: n.y ?? null,
+              },
+              create: {
+                id: n.id,
+                campusId: n.campusId || defaultCampusId,
+                floorId,
+                type: n.type as any,
+                name: n.name || null,
+                latitude: n.lat ?? null,
+                longitude: n.lng ?? null,
+                x: n.x ?? null,
+                y: n.y ?? null,
+              },
+            })
+          );
+        }
+      }
+
+      // Upsert Edges into relational DB table
+      if (edges && Array.isArray(edges)) {
+        const validNodeIds = new Set((nodes || []).map((n) => n.id));
+        for (const e of edges) {
+          const fromId = e.fromNodeId || e.from;
+          const toId = e.toNodeId || e.to;
+          if (fromId && toId && validNodeIds.has(fromId) && validNodeIds.has(toId)) {
+            ops.push(
+              prisma.edge.upsert({
+                where: { id: e.id },
+                update: {
+                  fromNodeId: fromId,
+                  toNodeId: toId,
+                  type: (e.type as any) || "WALK",
+                  distance: e.distance ?? 1,
+                  bidirectional: e.bidirectional ?? true,
+                  status: "PUBLISHED",
+                },
+                create: {
+                  id: e.id,
+                  fromNodeId: fromId,
+                  toNodeId: toId,
+                  type: (e.type as any) || "WALK",
+                  distance: e.distance ?? 1,
+                  bidirectional: e.bidirectional ?? true,
+                  status: "PUBLISHED",
+                },
+              })
+            );
+          }
+        }
+      }
+
+      // Upsert Destinations into relational DB table
+      if (destinations && Array.isArray(destinations)) {
+        const validNodeIds = new Set((nodes || []).map((n) => n.id));
+        for (const d of destinations) {
+          if (d.nodeId && validNodeIds.has(d.nodeId)) {
+            ops.push(
+              prisma.destination.upsert({
+                where: { id: d.id },
+                update: {
+                  campusId: defaultCampusId,
+                  nodeId: d.nodeId,
+                  name: d.name,
+                  category: d.category || "Custom",
+                },
+                create: {
+                  id: d.id,
+                  campusId: defaultCampusId,
+                  nodeId: d.nodeId,
+                  name: d.name,
+                  category: d.category || "Custom",
+                },
+              })
+            );
+          }
+        }
       }
 
       await prisma.$transaction(ops);

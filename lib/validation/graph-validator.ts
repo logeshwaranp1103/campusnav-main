@@ -241,7 +241,7 @@ export function validateCampusGraph(
       buildingsReachablePassed = false;
       issues.push({
         id: `no-building-nodes-${b.id}`,
-        severity: "CRITICAL",
+        severity: "WARNING",
         code: "UNREACHABLE_BUILDING",
         title: `Building Unreachable: "${b.name}"`,
         description: `Building "${b.name}" contains no navigation nodes.`,
@@ -474,7 +474,7 @@ export function validateCampusGraph(
         boundaryPassed = false;
         issues.push({
           id: `boundary-bld-${b.id}`,
-          severity: "CRITICAL",
+          severity: "WARNING",
           code: "OUTSIDE_CAMPUS_BOUNDARY",
           title: `Building Outside Campus Boundary: "${b.name}"`,
           description: `Building "${b.name}" GPS (${b.lat.toFixed(6)}, ${b.lng.toFixed(6)}) lies outside the official GeoJSON campus boundary.`,

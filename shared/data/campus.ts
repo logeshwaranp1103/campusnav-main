@@ -25,6 +25,7 @@ export type EdgeType = "WALK" | "ROAD" | "STAIRS" | "LIFT" | "RAMP" | "ESCALATOR
 
 export type Node = {
   id: string;
+  campusId?: string;
   type: NodeType;
   name?: string;
   floorId: string;

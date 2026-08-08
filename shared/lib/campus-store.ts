@@ -2104,7 +2104,7 @@ class CampusStore {
     this.notify();
   }
 
-  public publish() {
+  public async publishToServer(): Promise<{ success: boolean; version?: string; count?: number; error?: string }> {
     // Commit working draft graph to published graph
     this.publishedGraph = {
       buildings: JSON.parse(JSON.stringify(this.buildings)),
@@ -2122,20 +2122,33 @@ class CampusStore {
     const major = parseInt(this.publishedVersion.replace("v", "")) || 1;
     const minor = this.pendingChanges.length;
     this.publishedVersion = `v${major}.${minor > 0 ? minor : 1}`;
+
+    if (typeof window !== "undefined") {
+      try {
+        const res = await fetch("/api/published-graph", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ snapshot: this.publishedGraph }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.success === false) {
+          return { success: false, error: data.error || `Server return error (${res.status})` };
+        }
+      } catch (err: unknown) {
+        console.warn("Failed to sync published graph with server:", err);
+        return { success: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+
     this.logAction("PUBLISH", `Map ${this.publishedVersion} (${this.buildings.length} Buildings)`);
     this.pendingChanges = [];
     this.saveToLocalStorage();
-
-    // Push published snapshot to server API so all other devices receive data immediately
-    if (typeof window !== "undefined") {
-      fetch("/api/published-graph", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ snapshot: this.publishedGraph }),
-      }).catch((err) => console.warn("Failed to sync published graph with server:", err));
-    }
-
     this.notify();
+    return { success: true, version: this.publishedVersion, count: this.buildings.length };
+  }
+
+  public publish() {
+    this.publishToServer().catch((e) => console.error(e));
     return { version: this.publishedVersion, count: this.buildings.length };
   }
 

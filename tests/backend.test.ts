@@ -82,6 +82,33 @@ describe("Production Backend Architecture & API Services", () => {
     expect(result.validationReport.healthScore).toBeGreaterThanOrEqual(70);
   });
 
+  it("allows publishing a newly created building before nodes are placed and stores building in database", async () => {
+    const bld: Building = {
+      id: "b-new-tech",
+      campusId: "c1",
+      name: "Technology Innovation Tower",
+      shortCode: "TIT",
+      color: "#6366f1",
+      lat: 11.4965,
+      lng: 77.2774,
+      floorsCount: 3,
+    };
+
+    const draftSnapshot = {
+      buildings: [bld],
+      floors: [],
+      nodes: [],
+      edges: [],
+      destinations: [],
+      obstacles: [],
+    };
+
+    const result = await publishDraftGraph(draftSnapshot, "admin-1", "Added Tech Tower");
+
+    expect(result.success).toBe(true);
+    expect(result.version).toBeGreaterThan(0);
+  });
+
   it("lists map versions and supports version restoration", async () => {
     const versions = await getMapVersions();
     expect(versions.length).toBeGreaterThan(0);

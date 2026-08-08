@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdminSession } from "@/lib/auth/auth";
 import { campusStore } from "@/shared/lib/campus-store";
 import { logAuditEvent } from "@/lib/services/audit-service";
+import { prisma } from "@/lib/db";
 
 export async function GET(req: Request) {
   try {
@@ -29,9 +30,21 @@ export async function POST(req: Request) {
       shortCode: body.shortCode,
       color: body.color || "#4f46e5",
       floorsCount: body.floorsCount || 3,
-      lat: body.lat || 12.9716,
-      lng: body.lng || 77.5946,
+      lat: body.lat || 11.4965,
+      lng: body.lng || 77.2774,
     });
+
+    if (prisma) {
+      try {
+        await prisma.draftGraph.upsert({
+          where: { id: "active-draft" },
+          update: { snapshot: campusStore.getWorkingData() as any },
+          create: { id: "active-draft", snapshot: campusStore.getWorkingData() as any },
+        });
+      } catch (e) {
+        console.warn("Failed to update draft graph in DB on building creation:", e);
+      }
+    }
 
     await logAuditEvent({
       userId: user.id,
