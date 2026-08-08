@@ -61,7 +61,7 @@ export async function publishDraftGraph(
 
   if (prisma) {
     try {
-      const dbPromise = prisma.publishedGraph.upsert({
+      await prisma.publishedGraph.upsert({
         where: { id: "active-published" },
         update: {
           version: versionNum,
@@ -77,10 +77,6 @@ export async function publishDraftGraph(
           publishedBy: userId,
         },
       });
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("DB timeout")), 800)
-      );
-      await Promise.race([dbPromise, timeoutPromise]);
     } catch (e) {
       console.warn("Failed to persist published graph to Prisma database:", e);
     }
@@ -105,13 +101,9 @@ export async function publishDraftGraph(
 export async function getActivePublishedGraph() {
   if (prisma) {
     try {
-      const dbPromise = prisma.publishedGraph.findUnique({
+      const dbRecord = (await prisma.publishedGraph.findUnique({
         where: { id: "active-published" },
-      });
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("DB timeout")), 800)
-      );
-      const dbRecord = (await Promise.race([dbPromise, timeoutPromise])) as any;
+      })) as any;
       if (dbRecord && dbRecord.snapshot) {
         activePublishedSnapshot = {
           version: dbRecord.version,
@@ -122,8 +114,8 @@ export async function getActivePublishedGraph() {
         };
         return activePublishedSnapshot;
       }
-    } catch {
-      // Fallback if DB disconnected or timed out
+    } catch (e) {
+      console.warn("Failed to fetch active published graph from Prisma database:", e);
     }
   }
 
